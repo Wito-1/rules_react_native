@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package greeter.v1;
+
+message GreetRequest {
+  string name = 1;
+}
+
+message GreetResponse {
+  string greeting = 1;
+  // Which server answered, so clients can show the round trip.
+  string served_by = 2;
+  // How many greetings this server has handed out.
+  int64 count = 3;
+}
+
+service GreeterService {
+  rpc Greet(GreetRequest) returns (GreetResponse);
+}

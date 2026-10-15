@@ -1,0 +1,47 @@
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_library", "js_run_binary")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+npm_link_all_packages(name = "node_modules")
+
+js_binary(
+    name = "generator",
+    data = [
+        ":node_modules/@bufbuild/buf",
+        ":node_modules/@bufbuild/protoc-gen-es",
+    ],
+    entry_point = "generate.cjs",
+)
+
+# greeter.proto -> JS + .d.ts with protobuf-es. Connect v2 clients and servers use the generated
+# service descriptor directly, so no separate Connect plugin is needed. Editing the proto rebuilds
+# the server, the web app and the mobile app, all from this one action's outputs.
+js_run_binary(
+    name = "generate",
+    srcs = [
+        "buf.yaml",
+        "greeter/v1/greeter.proto",
+        "package.json",
+    ],
+    outs = [
+        "gen/greeter/v1/greeter_pb.d.ts",
+        "gen/greeter/v1/greeter_pb.js",
+    ],
+    args = [
+        "connect/proto",
+        "connect/proto/gen",
+    ],
+    mnemonic = "BufGenerate",
+    tool = ":generator",
+)
+
+# @examples/greeter-proto: what the server, the web app and the mobile app import.
+js_library(
+    name = "pkg",
+    srcs = [
+        "gen/greeter/v1/greeter_pb.d.ts",
+        "gen/greeter/v1/greeter_pb.js",
+        "package.json",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":node_modules"],
+)

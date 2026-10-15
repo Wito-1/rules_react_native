@@ -440,8 +440,12 @@ def _android_install_impl(ctx):
             adb = ctx.file._adb.short_path,
             apk = ctx.file.apk.short_path,
             package = ctx.attr.package,
-            # Debug builds load JS from Metro at localhost:8081 on the device.
-            reverse = '"{}" reverse tcp:{port} tcp:{port}\n'.format(ctx.file._adb.short_path, port = ctx.attr.metro_port) if ctx.attr.debug else "",
+            # Debug builds load JS from Metro at localhost:8081 on the device; apps can ask for more
+            # host ports (e.g. a backend) the same way.
+            reverse = "".join([
+                '"{}" reverse tcp:{port} tcp:{port}\n'.format(ctx.file._adb.short_path, port = port)
+                for port in ([ctx.attr.metro_port] if ctx.attr.debug else []) + ctx.attr.reverse_ports
+            ]),
         ),
         is_executable = True,
     )
@@ -458,6 +462,7 @@ android_install = rule(
         "apk": attr.label(allow_single_file = [".apk"], mandatory = True),
         "debug": attr.bool(default = False),
         "metro_port": attr.int(default = 8081),
+        "reverse_ports": attr.int_list(doc = "Host ports to expose on the device's localhost via `adb reverse`."),
         "package": attr.string(mandatory = True),
         "_adb": attr.label(default = "@rn_android_sdk//:adb", allow_single_file = True),
     },

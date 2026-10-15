@@ -46,6 +46,7 @@ def react_native_android_app(
         debug = False,
         edge_to_edge = False,
         manifest_placeholders = {},
+        adb_reverse = [],
         keystore = Label("//react_native/android:debug.keystore"),
         keystore_password = "android",
         key_alias = "androiddebugkey",
@@ -99,6 +100,8 @@ def react_native_android_app(
             Refresh, the dev menu, and the Hermes debugger. `<name>.install` also runs
             `adb reverse tcp:8081 tcp:8081` so the device reaches Metro on localhost.
         edge_to_edge: Sets BuildConfig.IS_EDGE_TO_EDGE_ENABLED.
+        adb_reverse: Host ports `<name>.install` exposes on the device's localhost (`adb reverse`),
+            e.g. a development backend's.
         manifest_placeholders: Extra `${...}` substitutions for the manifest merger. `applicationId`
             and `usesCleartextTraffic` (true in debug) are always set.
         keystore: Keystore for the in-build signature. Defaults to a public debug key; never ship
@@ -185,6 +188,7 @@ def react_native_android_app(
         apk = name,
         debug = debug,
         package = application_id or package,
+        reverse_ports = adb_reverse,
         **kwargs
     )
     android_sign(

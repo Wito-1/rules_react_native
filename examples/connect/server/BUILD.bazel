@@ -1,0 +1,26 @@
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+npm_link_all_packages(name = "node_modules")
+
+# bazel run //connect/server   (listens on :8080; PORT overrides)
+js_binary(
+    name = "server",
+    data = [
+        "package.json",
+        "routes.mjs",
+        ":node_modules",
+    ],
+    entry_point = "server.mjs",
+)
+
+# The API contract, in process: no network, no port.
+js_test(
+    name = "server_test",
+    data = [
+        "package.json",
+        "routes.mjs",
+        ":node_modules",
+    ],
+    entry_point = "server.test.mjs",
+)
