@@ -2,7 +2,8 @@
 
 Bazel rules that build React Native apps without Gradle, CocoaPods or a local Android SDK.
 
-Android is supported: release and debug APKs, Java and Kotlin, Metro with Fast Refresh, codegen'd
+Android is supported: release and debug APKs, Play-ready app bundles (R8, native debug symbols,
+Hermes source maps), Java and Kotlin, Metro with Fast Refresh, codegen'd
 TurboModules and Fabric components, pure C++ TurboModules, first-party Android libraries, native
 libraries installed from npm, device-free APK tests, and release signing that keeps keys out of the
 build. iOS currently stops at the JS bundle (see [iOS](#ios)).
@@ -122,7 +123,7 @@ Everything loads from `@rules_react_native//react_native:defs.bzl`; the generate
 
 | Rule | What it does |
 | --- | --- |
-| `react_native_android_app` | `<name>.apk` from Java/Kotlin sources and a bundle, plus `<name>.install` and `<name>.sign` |
+| `react_native_android_app` | `<name>.apk` and `<name>.aab` from Java/Kotlin sources and a bundle, plus `.install`/`.sign` targets for each |
 | `react_native_android_library` | Java/Kotlin, resources, manifest entries, assets, codegen, C++ and ReactPackages that an app picks up through `deps` |
 | `react_native_npm_library` | The same, built from an npm package's `android/` and C++ sources in `node_modules` |
 | `react_native_java_library` | Plain Java/Kotlin for an app, on the same compiler and classpath rules |
@@ -251,6 +252,32 @@ dev server implements them itself: `/status`, which DevSupportManager probes bef
 the `/message` websocket, the app's packager connection (the dev menu only enables "Open DevTools"
 once it's connected; it also carries `r`/`d` reload and dev-menu commands from the terminal). Run it
 under `ibazel` so edits sync into the server's sandbox; plain `bazel run` serves a snapshot.
+
+### Shipping to Play
+
+```sh
+bazel build //hello:hello.aab                                  # unsigned bundle for Play
+bazel run //hello:hello.aab.sign -- -keystore upload.jks -storepass:env KS_PASS upload
+bazel run //hello:hello.aab.install                            # install the bundle's split APKs, as Play would
+```
+
+`minify = True` shrinks, optimizes and obfuscates with R8 instead of dexing with D8 (`hello`'s dex
+goes from 11.6 MB to 2.2 MB). Its rules are
+[`proguard-defaults.pro`](react_native/android/proguard-defaults.pro) (the essentials of AGP's
+`proguard-android-optimize.txt`, plus line numbers), aapt2's keep rules for classes the manifest
+and layouts name, every library's consumer rules (an AAR's `proguard.txt`, rules embedded in jars
+under `META-INF/`, a library's `proguard_specs`) and the app's `proguard_specs`.
+
+`<name>.aab` is built by bundletool from the same content as the APK, with resources converted to
+proto format. Like AGP's, it carries the R8 mapping and `libappmodules.so`'s debug symbols in its
+metadata, so Play deobfuscates and symbolicates crashes with no separate upload. For other crash
+reporters, the app's output groups `proguard_mapping` and `native_debug_symbols` (Play's
+`native-debug-symbols.zip` layout) and the bundle's `sourcemap` (Metro's map composed with Hermes',
+as the Gradle plugin makes it) hold the same data. The bundle is unsigned in the build:
+`jarsigner` embeds a signing time, which would make it irreproducible, and the upload key belongs
+outside the build anyway.
+
+APKs, bundles, mappings, symbols and source maps are byte-identical across checkouts and machines.
 
 ### Signing
 
@@ -421,7 +448,7 @@ honored.
   Libraries that need annotation processors or KSP (e.g. Room) aren't supported.
 - **Library BuildConfig is release-only.** A library is built once for every app variant, so its
   `BuildConfig.DEBUG` is false, as in a release AAR.
-- **APK only, no R8.** No `.aab` and no shrinking; about 30 MB for two ABIs.
+- **No resource shrinking** (`shrinkResources`); R8 shrinks code only.
 
 ## iOS
 
@@ -436,7 +463,7 @@ with `rules_apple`'s `ios_application` on a macOS executor instead of CocoaPods.
 bazel test //...                  # tool unit tests, API docs freshness
 bazel run //docs:update           # regenerate docs/ after changing a docstring
 cd examples && bazel test //...   # build every app and test every APK
-bazel run //react_native/android/tools:pin_tools   # re-pin the manifest merger and kotlinc
+bazel run //react_native/android/tools:pin_tools   # re-pin the manifest merger, kotlinc and bundletool
 ```
 
 Releases are cut by pushing a `vX.Y.Z` tag whose version matches `MODULE.bazel`; the release

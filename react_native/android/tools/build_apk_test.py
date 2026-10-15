@@ -76,6 +76,24 @@ class BuildApkTest(unittest.TestCase):
             self.assertEqual(infos["classes.dex"].compress_type, zipfile.ZIP_DEFLATED)
             self.assertEqual({i.date_time for i in infos.values()}, {build_apk.ZIP_EPOCH})
 
+    def test_bundle_module_layout(self) -> None:
+        so = self._file("libfoo.so", b"\x7fELF")
+        status, out = self._build(["--bundle_module", f"--native_lib=x86_64/libfoo.so={so}"])
+        self.assertEqual(status, 0)
+        with zipfile.ZipFile(out) as z:
+            self.assertEqual(
+                set(z.namelist()),
+                {
+                    "manifest/AndroidManifest.xml",
+                    "resources.arsc",
+                    "res/layout/a.xml",
+                    "dex/classes.dex",
+                    "dex/classes2.dex",
+                    "lib/x86_64/libfoo.so",
+                    "root/okhttp3/publicsuffixes.gz",
+                },
+            )
+
     def test_identical_duplicate_native_libs_are_merged(self) -> None:
         a, b = self._file("a.so", b"same"), self._file("b.so", b"same")
         status, out = self._build([f"--native_lib=x86_64/libc++_shared.so={a}", f"--native_lib=x86_64/libc++_shared.so={b}"])

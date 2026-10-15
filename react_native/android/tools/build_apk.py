@@ -1,5 +1,8 @@
 """Assembles an unsigned, unaligned APK from linked resources, dex, native libraries and assets.
 
+With --bundle_module it writes the same content as an Android App Bundle base module instead
+(manifest/, dex/, root/ and proto-format resources from `aapt2 convert`), for bundletool.
+
 Entries are written in a fixed order with fixed timestamps so the output is reproducible. Native
 libraries, resources.arsc and the JS bundle are stored uncompressed: Android requires the first two
 to be mmap-able from the APK (targetSdk >= 30 for resources.arsc, extractNativeLibs=false for .so),
@@ -73,8 +76,24 @@ def main() -> int:
         default=[],
         help="Jar whose non-class files ship in the APK",
     )
+    parser.add_argument(
+        "--bundle_module",
+        action="store_true",
+        help="Write an app bundle module zip; --resources must be in proto format",
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
+
+    def placed(kind: str, name: str) -> str:
+        if not args.bundle_module:
+            return name
+        if kind == "manifest":
+            return "manifest/" + name
+        if kind == "dex":
+            return "dex/" + name
+        if kind == "java_resource":
+            return "root/" + name
+        return name
 
     apk = ApkWriter(args.out)
     with zipfile.ZipFile(args.resources) as res:
@@ -84,13 +103,15 @@ def main() -> int:
             key=lambda i: (i.filename != "AndroidManifest.xml", i.filename),
         ):
             apk.add(
-                info.filename,
+                placed("manifest", info.filename)
+                if info.filename == "AndroidManifest.xml"
+                else info.filename,
                 res.read(info),
                 compress=info.compress_type != zipfile.ZIP_STORED,
             )
     with zipfile.ZipFile(args.dex) as dex:
         for name in sorted(n for n in dex.namelist() if n.endswith(".dex")):
-            apk.add(name, dex.read(name))
+            apk.add(placed("dex", name), dex.read(name))
     # fbjni and react-android both ship libc++_shared.so and libfbjni.so. Identical copies are
     # expected; differing ones would load whichever won, so refuse rather than guess.
     native_libs: dict[str, tuple[str, bytes]] = {}
@@ -117,7 +138,7 @@ def main() -> int:
         with zipfile.ZipFile(jar) as j:
             for name in j.namelist():
                 if _is_java_resource(name):
-                    apk.add(name, j.read(name))
+                    apk.add(placed("java_resource", name), j.read(name))
     apk.close()
     return 0
 

@@ -8,12 +8,14 @@ AndroidLibraryInfo = provider(
     fields = {
         "resources": "depset[struct(package, flata, r_txt, manifest)], dependencies before dependents so later entries win when linked as overlays",
         "native_libs": "depset[struct(abi, file)]",
+        "native_debug_libs": "depset[struct(abi, file)]: unstripped copies of native_libs built here, for crash symbolication",
         "assets": "depset[struct(path, file)]",
         "cc_headers": "depset[File]: prefab headers, for compiling against the library's native code",
         "cc_include_dirs": "depset[str]: include roots of `cc_headers`",
         "compile_jars": "depset[File]: the library's jars plus its API closure, i.e. what a dependent compiles against (Gradle's compileClasspath)",
         "runtime_jars": "depset[File]: every jar the library needs at run time, to be dexed into the app",
         "react_packages": "depset[str]: ReactPackage classes the app's PackageList must instantiate",
+        "proguard_specs": "depset[struct(file, path)]: consumer R8/ProGuard rules (AAR proguard.txt, `consumerProguardFiles`); `path` may point inside `file` when it's a directory",
         "appmodules": "depset[struct]: C++ to compile into libappmodules.so and register in autolinking.cpp; see `appmodules_unit`",
     },
 )
@@ -73,11 +75,13 @@ def merge_android_infos(
         exports = [],
         resources = [],
         native_libs = [],
+        native_debug_libs = [],
         assets = [],
         cc_headers = [],
         cc_include_dirs = [],
         jars = [],
         react_packages = [],
+        proguard_specs = [],
         appmodules = []):
     """Builds an AndroidLibraryInfo from a target's own parts and its deps/exports.
 
@@ -86,12 +90,14 @@ def merge_android_infos(
         exports: The subset of `deps` that is part of this target's API.
         resources: This target's own resource structs.
         native_libs: This target's own native library structs.
+        native_debug_libs: Unstripped copies of `native_libs`.
         assets: This target's own asset structs.
         cc_headers: This target's own prefab headers.
         cc_include_dirs: Include roots of `cc_headers`.
         jars: This target's own jars.
         react_packages: This target's own ReactPackage class names.
         appmodules: This target's own `appmodules_unit`s.
+        proguard_specs: This target's own consumer rules, as `struct(file, path)`.
 
     Returns:
         AndroidLibraryInfo.
@@ -105,6 +111,7 @@ def merge_android_infos(
     return AndroidLibraryInfo(
         resources = depset(resources, transitive = [i.resources for i in infos], order = "postorder"),
         native_libs = depset(native_libs, transitive = [i.native_libs for i in infos]),
+        native_debug_libs = depset(native_debug_libs, transitive = [i.native_debug_libs for i in infos]),
         assets = depset(assets, transitive = [i.assets for i in infos]),
         cc_headers = depset(cc_headers, transitive = [i.cc_headers for i in infos]),
         cc_include_dirs = depset(cc_include_dirs, transitive = [i.cc_include_dirs for i in infos]),
@@ -118,6 +125,7 @@ def merge_android_infos(
         ),
         react_packages = depset(react_packages, transitive = [i.react_packages for i in infos]),
         appmodules = depset(appmodules, transitive = [i.appmodules for i in infos]),
+        proguard_specs = depset(proguard_specs, transitive = [i.proguard_specs for i in infos]),
     )
 
 def _dirname(path):
@@ -190,6 +198,7 @@ def _android_maven_import_impl(ctx):
             cc_headers = ctx.files.prefab_headers,
             cc_include_dirs = include_dirs.keys(),
             jars = ctx.files.jars,
+            proguard_specs = [struct(file = f, path = f.path) for f in ctx.files.proguard_specs],
         ),
     ]
     if java_infos:
@@ -213,6 +222,7 @@ android_maven_import = rule(
         "manifest": attr.label(allow_single_file = True),
         "native_libs": attr.label_list(allow_files = [".so"]),
         "prefab_headers": attr.label_list(allow_files = True),
+        "proguard_specs": attr.label_list(allow_files = True, doc = "The AAR's consumer proguard.txt."),
         "r_txt": attr.label_list(allow_files = True),
         "res": attr.label_list(allow_files = True),
         "_aapt2": attr.label(

@@ -37,11 +37,13 @@ react_native_bundle(
     platform = "ios",
 )
 
-# Release: JS embedded as Hermes bytecode.
+# Release: JS embedded as Hermes bytecode, Java shrunk and obfuscated with R8. `:hello.aab` is the
+# Play upload (sign it with `bazel run :hello.aab.sign`).
 react_native_android_app(
     name = "hello",
     srcs = _JAVA_SRCS,
     bundle = ":bundle_android",
+    minify = True,
     manifest = "android/AndroidManifest.xml",
     package = "com.example.hello",
     res = _RES,
@@ -65,6 +67,7 @@ react_native_dev_server(
 
 react_native_apk_test(
     name = "hello_apk_test",
+    aab = True,
     apk = ":hello",
     assets = ["index.android.bundle"],
     package = "com.example.hello",

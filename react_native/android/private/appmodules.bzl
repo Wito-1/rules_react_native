@@ -148,6 +148,7 @@ def _react_native_appmodules_impl(ctx):
             codegen_includes.append("%s/react/renderer/components/%s" % (u.jni.path, u.codegen_library))
 
     outputs = []
+    debug_outputs = []
     for abi in ctx.attr.abis:
         if abi not in _ABI_TARGETS:
             fail("unsupported ABI %r; expected one of %s" % (abi, sorted(_ABI_TARGETS)))
@@ -159,6 +160,7 @@ def _react_native_appmodules_impl(ctx):
         if missing:
             fail("no %s for %s among the deps' native libraries" % (", ".join(missing), abi))
 
+        unstripped = ctx.actions.declare_file("%s/unstripped/%s/libappmodules.so" % (ctx.label.name, abi))
         out = ctx.actions.declare_file("%s/%s/libappmodules.so" % (ctx.label.name, abi))
         args = ctx.actions.args()
         args.add("--target=%s%d" % (_ABI_TARGETS[abi], ctx.attr.min_sdk))
@@ -189,9 +191,10 @@ def _react_native_appmodules_impl(ctx):
             "-Wl,-soname,libappmodules.so",
             # Paths would otherwise leak into the binary through __FILE__ and debug info.
             "-ffile-prefix-map=%s=." % ctx.bin_dir.path,
-            "-s",
+            # Debug info for symbolicating native crashes; the packaged copy is stripped below.
+            "-g",
         ])
-        args.add("-o", out)
+        args.add("-o", unstripped)
         ctx.actions.run(
             executable = ctx.file._clang,
             arguments = [args],
@@ -200,15 +203,26 @@ def _react_native_appmodules_impl(ctx):
                 transitive = [headers],
             ),
             tools = ctx.files._toolchain_files,
-            outputs = [out],
+            outputs = [unstripped],
             mnemonic = "ReactNativeAppModules",
             progress_message = "Compiling libappmodules.so for %s of %%{label}" % abi,
         )
+        ctx.actions.run(
+            executable = ctx.file._objcopy,
+            # What AGP's StripDebugSymbolsTask runs.
+            arguments = ["--strip-unneeded", unstripped.path, out.path],
+            inputs = [unstripped],
+            outputs = [out],
+            mnemonic = "ReactNativeStrip",
+            progress_message = "Stripping libappmodules.so for %s of %%{label}" % abi,
+        )
         outputs.append(struct(abi = abi, file = out))
+        debug_outputs.append(struct(abi = abi, file = unstripped))
 
     return [
         DefaultInfo(files = depset([o.file for o in outputs])),
-        merge_android_infos(native_libs = outputs),
+        merge_android_infos(native_libs = outputs, native_debug_libs = debug_outputs),
+        OutputGroupInfo(native_debug_symbols = depset([o.file for o in debug_outputs])),
     ]
 
 react_native_appmodules = rule(
@@ -233,6 +247,7 @@ app without this library starts Hermes and then fails on the first native module
             ],
         ),
         "_clang": attr.label(default = "@rn_android_ndk//:clang", allow_single_file = True, cfg = "exec"),
+        "_objcopy": attr.label(default = "@rn_android_ndk//:objcopy", allow_single_file = True, cfg = "exec"),
         "_toolchain_files": attr.label(default = "@rn_android_ndk//:toolchain_files", cfg = "exec"),
     },
 )

@@ -59,7 +59,7 @@ def _library_manifest(ctx, manifest_path, inputs):
     )
     return out
 
-def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, kotlin, assets, appmodules):
+def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, kotlin, assets, appmodules, proguard_specs):
     """Everything after manifest and resource compilation, shared by both rules."""
     compile_only = [ctx.attr._react_native] if ctx.attr.react_native else []
     dep_infos = collect_android_infos(ctx.attr.deps + ctx.attr.exports + compile_only)
@@ -146,6 +146,7 @@ def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, 
             jars = [jar],
             react_packages = ctx.attr.react_packages,
             appmodules = appmodules,
+            proguard_specs = proguard_specs,
         ),
         JavaInfo(
             output_jar = jar,
@@ -208,6 +209,7 @@ def _react_native_android_library_impl(ctx):
         kotlin = None,
         assets = assets,
         appmodules = appmodules,
+        proguard_specs = [struct(file = f, path = f.path) for f in ctx.files.proguard_specs],
     )
 
 _COMMON_ATTRS = dict(JAVA_ATTRS, **{
@@ -256,6 +258,7 @@ its `react_packages` are added to PackageList.""",
                   "Registered in autolinking.cpp's cxxModuleProvider by `class::kModuleName` (from the codegen'd `<Name>CxxSpec`).",
         ),
         "manifest": attr.label(allow_single_file = [".xml"], doc = "Optional; components, permissions and meta-data to merge into the app's manifest."),
+        "proguard_specs": attr.label_list(allow_files = True, doc = "R8/ProGuard rules apps that minify must apply (AGP's `consumerProguardFiles`)."),
         "res": attr.label_list(allow_files = True, doc = "Files under one res/ directory."),
         "srcs": attr.label_list(allow_files = JAVA_SRC_EXTENSIONS, doc = "Java and Kotlin sources, and srcjars."),
     }),
@@ -306,6 +309,7 @@ def _react_native_npm_library_impl(ctx):
         kotlin = True,
         assets = [],
         appmodules = appmodules,
+        proguard_specs = [struct(file = pkg, path = path(p)) for p in ctx.attr.proguard_specs],
     )
 
 react_native_npm_library = rule(
@@ -324,6 +328,7 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
             doc = "Source roots of .java/.kt files: Gradle's `sourceSets.main` for the new architecture.",
         ),
         "manifest": attr.string(default = "android/src/main/AndroidManifest.xml", doc = "Library manifest; empty for none."),
+        "proguard_specs": attr.string_list(doc = "R8/ProGuard rules files in the package that apps must apply (`consumerProguardFiles`), e.g. `[\"android/proguard-rules.pro\"]`."),
         "npm_package": attr.label(mandatory = True, doc = "The package's link target from `npm_link_all_packages`, e.g. `:node_modules/react-native-safe-area-context`."),
         "res_dir": attr.string(doc = "res/ directory, if the library has resources, e.g. `android/src/main/res`."),
     }),

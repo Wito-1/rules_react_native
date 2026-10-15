@@ -1,0 +1,8 @@
+{
+  "artifacts": [
+    "com.android.tools.build:bundletool:1.18.3",
+    "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
+  ],
+  "build_type": "release",
+  "excludes": []
+}

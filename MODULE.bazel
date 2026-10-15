@@ -13,7 +13,7 @@ bazel_dep(name = "rules_python", version = "2.2.0")
 # The ruleset's own repositories: the Android SDK/NDK and the host tool jars. Consumers declare
 # their React Native artifact sets with `react_native.maven` tags (see extensions.bzl).
 react_native = use_extension("//react_native:extensions.bzl", "react_native")
-use_repo(react_native, "rn_android_ndk", "rn_android_sdk", "rn_android_tools_maven", "rn_kotlin_compiler_maven", "rn_maven_default", "rn_maven_default_debug", "rn_profile")
+use_repo(react_native, "rn_android_ndk", "rn_android_sdk", "rn_android_tools_maven", "rn_bundletool_maven", "rn_kotlin_compiler_maven", "rn_maven_default", "rn_maven_default_debug", "rn_profile")
 
 bazel_dep(name = "bazel_lib", version = "3.2.2", dev_dependency = True)
 bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)

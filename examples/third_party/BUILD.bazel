@@ -63,6 +63,7 @@ react_native_npm_library(
 
 react_native_android_app(
     name = "third_party",
+    minify = True,
     srcs = [
         "android/java/com/example/thirdparty/MainActivity.kt",
         "android/java/com/example/thirdparty/MainApplication.kt",
@@ -82,6 +83,7 @@ react_native_android_app(
 
 react_native_apk_test(
     name = "third_party_apk_test",
+    aab = True,
     apk = ":third_party",
     assets = ["index.android.bundle"],
     package = "com.example.thirdparty",

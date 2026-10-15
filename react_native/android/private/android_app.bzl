@@ -11,6 +11,7 @@ AndroidAppResourcesInfo = provider(
         "resources_apk": "File: APK written by `aapt2 link` (manifest, resources.arsc, res/)",
         "manifest": "File: the merged AndroidManifest.xml",
         "min_sdk": "int",
+        "proguard_keep": "File: aapt2's keep rules for classes the manifest and resources reference",
     },
 )
 
@@ -175,6 +176,7 @@ def _android_app_resources_impl(ctx):
 
     resources_apk = ctx.actions.declare_file(ctx.label.name + "/resources.ap_")
     r_txt = ctx.actions.declare_file(ctx.label.name + "/R.txt")
+    proguard_keep = ctx.actions.declare_file(ctx.label.name + "/aapt2_keep.pro")
     args = ctx.actions.args()
     args.add("link")
     args.add("-o", resources_apk)
@@ -187,12 +189,13 @@ def _android_app_resources_impl(ctx):
     args.add("--auto-add-overlay")
     args.add("--no-version-vectors")
     args.add("--output-text-symbols", r_txt)
+    args.add("--proguard", proguard_keep)
     args.add_all(overlays, before_each = "-R")
     ctx.actions.run(
         executable = ctx.file._aapt2,
         arguments = [args],
         inputs = [merged_manifest, ctx.file._android_jar] + overlays,
-        outputs = [resources_apk, r_txt],
+        outputs = [resources_apk, r_txt, proguard_keep],
         mnemonic = "Aapt2Link",
         progress_message = "Linking Android resources of %{label}",
     )
@@ -246,6 +249,7 @@ def _android_app_resources_impl(ctx):
             resources_apk = resources_apk,
             manifest = merged_manifest,
             min_sdk = ctx.attr.min_sdk,
+            proguard_keep = proguard_keep,
         ),
         OutputGroupInfo(
             manifest = depset([merged_manifest]),
@@ -303,59 +307,97 @@ def _android_apk_impl(ctx):
     ]).to_list()
 
     dex = ctx.actions.declare_file(ctx.label.name + "/classes.dex.zip")
-    d8_args = ctx.actions.args()
-    d8_args.add("--debug" if ctx.attr.debug else "--release")
+    mapping = None
+    if ctx.attr.minify:
+        mapping = ctx.actions.declare_file(ctx.label.name + "/mapping.txt")
+        specs = depset(transitive = [i.proguard_specs for i in infos]).to_list()
+        runtime = ctx.attr._jdk[java_common.JavaRuntimeInfo]
+        r8_args = ctx.actions.args()
+        r8_args.use_param_file("@%s", use_always = True)
+        r8_args.set_param_file_format("multiline")
+        r8_args.add("--java", runtime.java_executable_exec_path)
+        r8_args.add_all(ctx.files._d8_classpath, before_each = "--r8_classpath")
+        r8_args.add("--lib", ctx.file._android_jar)
+        r8_args.add("--min_api", str(res_info.min_sdk))
+        if ctx.attr.debug:
+            r8_args.add("--debug")
+        r8_args.add_all([ctx.file._proguard_defaults, res_info.proguard_keep] + ctx.files.proguard_specs, before_each = "--pg_conf")
+        r8_args.add_all([s.path for s in specs], before_each = "--pg_conf")
+        r8_args.add_all(runtime_jars, before_each = "--program")
+        r8_args.add("--mapping_out", mapping)
+        r8_args.add("--out", dex)
+        ctx.actions.run(
+            executable = ctx.executable._r8,
+            arguments = [r8_args],
+            inputs = depset(
+                runtime_jars + ctx.files._d8_classpath + ctx.files.proguard_specs +
+                [ctx.file._android_jar, ctx.file._proguard_defaults, res_info.proguard_keep] +
+                [s.file for s in specs],
+            ),
+            tools = runtime.files,
+            outputs = [dex, mapping],
+            mnemonic = "AndroidR8",
+            progress_message = "Shrinking and dexing %{label} with R8",
+        )
+    else:
+        d8_args = ctx.actions.args()
+        d8_args.add("--debug" if ctx.attr.debug else "--release")
 
-    # Debug dexing keeps local-variable tables and reports every malformed one in third-party
-    # jars (kotlinx-coroutines has hundreds) at info level; they're harmless and drown real output.
-    d8_args.add_all(["--map-diagnostics", "info", "none"])
-    d8_args.add("--min-api", str(res_info.min_sdk))
-    d8_args.add("--lib", ctx.file._android_jar)
-    d8_args.add("--output", dex)
-    d8_args.add_all(runtime_jars)
-    run_java_tool(
-        ctx,
-        main_class = "com.android.tools.r8.D8",
-        classpath = ctx.files._d8_classpath,
-        jvm_flags = ["-Xmx4g"],
-        arguments = [d8_args],
-        inputs = runtime_jars + [ctx.file._android_jar],
-        outputs = [dex],
-        mnemonic = "AndroidDex",
-        progress_message = "Dexing %{label}",
-    )
+        # Debug dexing keeps local-variable tables and reports every malformed one in third-party
+        # jars (kotlinx-coroutines has hundreds) at info level; they're harmless and drown real output.
+        d8_args.add_all(["--map-diagnostics", "info", "none"])
+        d8_args.add("--min-api", str(res_info.min_sdk))
+        d8_args.add("--lib", ctx.file._android_jar)
+        d8_args.add("--output", dex)
+        d8_args.add_all(runtime_jars)
+        run_java_tool(
+            ctx,
+            main_class = "com.android.tools.r8.D8",
+            classpath = ctx.files._d8_classpath,
+            jvm_flags = ["-Xmx4g"],
+            arguments = [d8_args],
+            inputs = runtime_jars + [ctx.file._android_jar],
+            outputs = [dex],
+            mnemonic = "AndroidDex",
+            progress_message = "Dexing %{label}",
+        )
 
     native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
     native_libs = [lib for lib in native_libs if lib.abi in ctx.attr.abis]
     assets = depset(transitive = [i.assets for i in infos]).to_list()
 
+    def package(resources, out, bundle_module):
+        args = ctx.actions.args()
+        args.use_param_file("@%s", use_always = True)
+        args.set_param_file_format("multiline")
+        args.add("--resources", resources)
+        args.add("--dex", dex)
+        for lib in native_libs:
+            args.add("--native_lib", "%s/%s=%s" % (lib.abi, lib.file.basename, lib.file.path))
+        for asset in assets:
+            args.add("--asset", "%s=%s" % (asset.path, asset.file.path))
+        for f in ctx.files.assets:
+            args.add("--asset", "%s=%s" % (f.basename, f.path))
+        for path, f in _app_assets(ctx.files.app_assets):
+            args.add("--asset", "%s=%s" % (path, f.path))
+        args.add_all(runtime_jars, before_each = "--java_resources_from")
+        if bundle_module:
+            args.add("--bundle_module")
+        args.add("--out", out)
+        ctx.actions.run(
+            executable = ctx.executable._build_apk,
+            arguments = [args],
+            inputs = depset(
+                [resources, dex] + runtime_jars + ctx.files.assets + ctx.files.app_assets +
+                [lib.file for lib in native_libs] + [a.file for a in assets],
+            ),
+            outputs = [out],
+            mnemonic = "AndroidBuildBundleModule" if bundle_module else "AndroidBuildApk",
+            progress_message = "Packaging %{label}" + (" as a bundle module" if bundle_module else ""),
+        )
+
     unsigned = ctx.actions.declare_file(ctx.label.name + "/unsigned.apk")
-    apk_args = ctx.actions.args()
-    apk_args.use_param_file("@%s", use_always = True)
-    apk_args.set_param_file_format("multiline")
-    apk_args.add("--resources", res_info.resources_apk)
-    apk_args.add("--dex", dex)
-    for lib in native_libs:
-        apk_args.add("--native_lib", "%s/%s=%s" % (lib.abi, lib.file.basename, lib.file.path))
-    for asset in assets:
-        apk_args.add("--asset", "%s=%s" % (asset.path, asset.file.path))
-    for f in ctx.files.assets:
-        apk_args.add("--asset", "%s=%s" % (f.basename, f.path))
-    for path, f in _app_assets(ctx.files.app_assets):
-        apk_args.add("--asset", "%s=%s" % (path, f.path))
-    apk_args.add_all(runtime_jars, before_each = "--java_resources_from")
-    apk_args.add("--out", unsigned)
-    ctx.actions.run(
-        executable = ctx.executable._build_apk,
-        arguments = [apk_args],
-        inputs = depset(
-            [res_info.resources_apk, dex] + runtime_jars + ctx.files.assets + ctx.files.app_assets +
-            [lib.file for lib in native_libs] + [a.file for a in assets],
-        ),
-        outputs = [unsigned],
-        mnemonic = "AndroidBuildApk",
-        progress_message = "Packaging %{label}",
-    )
+    package(res_info.resources_apk, unsigned, bundle_module = False)
 
     # 16 KiB page alignment for .so files is required on Android 15+ devices with 16 KiB pages.
     aligned = ctx.actions.declare_file(ctx.label.name + "/aligned.apk")
@@ -388,23 +430,107 @@ def _android_apk_impl(ctx):
         progress_message = "Signing %{label}",
     )
 
+    aab = _app_bundle(ctx, res_info, package, mapping)
+    debug_libs = [l for l in depset(transitive = [i.native_debug_libs for i in infos]).to_list() if l.abi in ctx.attr.abis]
+    native_debug_symbols = ctx.actions.declare_file(ctx.label.name + "/native-debug-symbols.zip")
+    zip_args = ctx.actions.args()
+    zip_args.add("c", native_debug_symbols)
+    zip_args.add_all(["%s/%s=%s" % (l.abi, l.file.basename, l.file.path) for l in debug_libs])
+    ctx.actions.run(
+        executable = ctx.executable._zipper,
+        arguments = [zip_args],
+        inputs = [l.file for l in debug_libs],
+        outputs = [native_debug_symbols],
+        mnemonic = "AndroidNativeDebugSymbols",
+        progress_message = "Zipping native debug symbols of %{label}",
+    )
+
     return [
         DefaultInfo(files = depset([apk])),
-        AndroidApkInfo(unsigned = aligned, min_sdk = res_info.min_sdk),
-        OutputGroupInfo(unsigned = depset([aligned])),
+        AndroidApkInfo(unsigned = aligned, min_sdk = res_info.min_sdk, aab = aab),
+        OutputGroupInfo(
+            aab = depset([aab]),
+            native_debug_symbols = depset([native_debug_symbols]),
+            proguard_mapping = depset([mapping] if mapping else []),
+            unsigned = depset([aligned]),
+        ),
     ]
 
+# Play's defaults for a React Native app, as AGP writes them: native libraries and the JS bundle
+# stay uncompressed so they can be mmapped from the installed APKs.
+_BUNDLE_CONFIG = {
+    "compression": {"uncompressedGlob": ["assets/**/*.bundle"]},
+    "optimizations": {
+        "splitsConfig": {
+            "splitDimension": [
+                {"value": "ABI"},
+                {"value": "SCREEN_DENSITY"},
+                {"value": "LANGUAGE"},
+            ],
+        },
+        "uncompressNativeLibraries": {"enabled": True},
+    },
+}
+
+def _app_bundle(ctx, res_info, package, mapping):
+    """Builds the unsigned .aab: same content as the APK, resources in proto format."""
+    proto_resources = ctx.actions.declare_file(ctx.label.name + "/proto_resources.ap_")
+    ctx.actions.run(
+        executable = ctx.file._aapt2,
+        arguments = ["convert", "--output-format", "proto", "-o", proto_resources.path, res_info.resources_apk.path],
+        inputs = [res_info.resources_apk],
+        outputs = [proto_resources],
+        mnemonic = "Aapt2Convert",
+        progress_message = "Converting resources of %{label} for the app bundle",
+    )
+    module = ctx.actions.declare_file(ctx.label.name + "/base.zip")
+    package(proto_resources, module, bundle_module = True)
+
+    config = ctx.actions.declare_file(ctx.label.name + "/BundleConfig.json")
+    ctx.actions.write(config, json.encode_indent(_BUNDLE_CONFIG))
+
+    # Play reads these from the bundle's metadata: deobfuscation of Java stack traces and
+    # symbolication of native ones, with no separate upload.
+    infos = collect_android_infos(ctx.attr.deps)
+    debug_libs = [l for l in depset(transitive = [i.native_debug_libs for i in infos]).to_list() if l.abi in ctx.attr.abis]
+    metadata = [("com.android.tools.build.debugsymbols/%s/%s.dbg" % (l.abi, l.file.basename), l.file) for l in debug_libs]
+    if mapping:
+        metadata.append(("com.android.tools.build.obfuscation/proguard.map", mapping))
+
+    aab = ctx.actions.declare_file(ctx.label.name + ".aab")
+    args = ctx.actions.args()
+    args.add("build-bundle")
+    args.add("--modules=" + module.path)
+    args.add("--config=" + config.path)
+    args.add_all(["--metadata-file=%s:%s" % (path, f.path) for path, f in metadata])
+    args.add("--output=" + aab.path)
+    run_java_tool(
+        ctx,
+        main_class = "com.android.tools.build.bundletool.BundleToolMain",
+        classpath = ctx.files._bundletool_classpath,
+        arguments = [args],
+        inputs = [module, config] + [f for _, f in metadata],
+        outputs = [aab],
+        mnemonic = "AndroidBuildBundle",
+        progress_message = "Building the app bundle of %{label}",
+    )
+    return aab
+
 AndroidApkInfo = provider(
-    doc = "An APK before signing, for signing outside the build (`android_sign`).",
+    doc = "An APK before signing, for signing outside the build (`android_sign`), and the app bundle.",
     fields = {
         "unsigned": "File: the zipaligned, unsigned APK",
         "min_sdk": "int",
+        "aab": "File: the unsigned Android App Bundle",
     },
 )
 
 android_apk = rule(
     implementation = _android_apk_impl,
-    doc = "Dexes the app's runtime classpath and packages it with linked resources, native libraries and assets into a signed APK.",
+    doc = """Dexes (or shrinks with R8) the app's runtime classpath and packages it with linked resources,
+native libraries and assets into a signed APK. Output groups: `aab` (the unsigned app bundle, with
+the R8 mapping and native debug symbols in its metadata), `native_debug_symbols`,
+`proguard_mapping`, `unsigned`.""",
     attrs = dict(_SDK_ATTRS, **{
         "abis": attr.string_list(mandatory = True),
         "app_assets": attr.label_list(allow_files = True, doc = "Files under one assets/ directory, packaged at the same relative paths (e.g. assets/fonts/X.ttf)."),
@@ -414,10 +540,16 @@ android_apk = rule(
         "key_alias": attr.string(mandatory = True),
         "keystore": attr.label(allow_single_file = True, mandatory = True),
         "keystore_password": attr.string(mandatory = True, doc = "Stored in the action command line; only for keys that aren't secret. See `android_sign` for release keys."),
+        "minify": attr.bool(doc = "Shrink, optimize and obfuscate with R8 instead of dexing with D8."),
+        "proguard_specs": attr.label_list(allow_files = True, doc = "The app's own R8 rules, besides the defaults, aapt2's and the libraries' consumer rules."),
         "resources": attr.label(providers = [AndroidAppResourcesInfo], mandatory = True),
         "_apksigner_classpath": attr.label(default = "@rn_android_sdk//:apksigner_jar", cfg = "exec"),
         "_build_apk": attr.label(default = "//react_native/android/tools:build_apk", executable = True, cfg = "exec"),
+        "_bundletool_classpath": attr.label(default = "@rn_bundletool_maven//:all", cfg = "exec"),
         "_d8_classpath": attr.label(default = "@rn_android_sdk//:d8_jar", cfg = "exec"),
+        "_proguard_defaults": attr.label(default = "//react_native/android:proguard-defaults.pro", allow_single_file = True),
+        "_r8": attr.label(default = "//react_native/android/tools:r8", executable = True, cfg = "exec"),
+        "_zipper": attr.label(default = "@bazel_tools//tools/zip:zipper", executable = True, cfg = "exec"),
         "_zipalign": attr.label(default = "@rn_android_sdk//:zipalign", allow_single_file = True, cfg = "exec"),
         "_zipalign_libs": attr.label(default = "@rn_android_sdk//:zipalign_libs", cfg = "exec"),
     }),
@@ -516,6 +648,121 @@ cache, a remote cache or build logs. Use apksigner's `env:` or `file:` password 
     attrs = {
         "apk": attr.label(providers = [AndroidApkInfo], mandatory = True),
         "_apksigner": attr.label(default = "@rn_android_sdk//:apksigner_jar", allow_single_file = True),
+        "_jdk": attr.label(default = "@rules_java//toolchains:remotejdk_21", providers = [java_common.JavaRuntimeInfo]),
+    },
+)
+
+_SIGN_BUNDLE_SCRIPT = """\
+#!/usr/bin/env bash
+# Signs {name}'s app bundle for upload with a key that stays out of Bazel. Arguments go to
+# `jarsigner`, key alias last, e.g.
+#   bazel run {label} -- -keystore upload.jks -storepass:env KS_PASS upload
+set -euo pipefail
+runfiles="$(cd "${{RUNFILES_DIR:-$0.runfiles}}" && pwd)"
+cd "${{BUILD_WORKING_DIRECTORY:-$PWD}}"
+if [ $# -lt 1 ]; then
+  echo "usage: bazel run {label} -- <jarsigner options> <key alias>" >&2
+  exit 2
+fi
+out=()
+case " $* " in
+  *" -signedjar "*) ;;
+  *) out=(-signedjar "{default_out}"); echo "Writing {default_out} in $PWD" ;;
+esac
+"$runfiles/{jarsigner}" "${{out[@]}}" "${{@:1:$#-1}}" "$runfiles/{aab}" "${{@: -1}}"
+"""
+
+def _android_sign_bundle_impl(ctx):
+    info = ctx.attr.apk[AndroidApkInfo]
+    runtime = ctx.attr._jdk[java_common.JavaRuntimeInfo]
+    default_out = ctx.attr.apk.label.name + "-signed.aab"
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(script, _SIGN_BUNDLE_SCRIPT.format(
+        name = ctx.attr.apk.label.name,
+        label = str(ctx.label),
+        default_out = default_out,
+        jarsigner = _rlocation(ctx.workspace_name, runtime.java_home_runfiles_path + "/bin/jarsigner"),
+        aab = _rlocation(ctx.workspace_name, info.aab.short_path),
+    ), is_executable = True)
+    runfiles = ctx.runfiles(files = [info.aab], transitive_files = runtime.files)
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+android_sign_bundle = rule(
+    implementation = _android_sign_bundle_impl,
+    doc = """`bazel run` target that signs an app's .aab with an upload key passed at run time.
+
+As with `android_sign`, the keystore and password never become action inputs. Use jarsigner's
+`-storepass:env VAR` or `-storepass:file path` forms.""",
+    executable = True,
+    attrs = {
+        "apk": attr.label(providers = [AndroidApkInfo], mandatory = True),
+        "_jdk": attr.label(default = "@rules_java//toolchains:remotejdk_21", providers = [java_common.JavaRuntimeInfo]),
+    },
+)
+
+_INSTALL_BUNDLE_SCRIPT = """\
+#!/usr/bin/env bash
+# Installs {name} from its app bundle the way Play would: bundletool generates the split APKs for
+# the connected device (set ANDROID_SERIAL to choose one), signs them with the build's key and
+# installs them.
+set -euo pipefail
+runfiles="$(cd "${{RUNFILES_DIR:-$0.runfiles}}" && pwd)"
+adb="$runfiles/{adb}"
+bundletool() {{
+  "$runfiles/{java}" -cp "{classpath}" com.android.tools.build.bundletool.BundleToolMain "$@"
+}}
+device=()
+if [ -n "${{ANDROID_SERIAL:-}}" ]; then device=(--device-id="$ANDROID_SERIAL"); fi
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+bundletool build-apks --bundle="$runfiles/{aab}" --output="$work/app.apks" --connected-device \\
+  --adb="$adb" "${{device[@]}}" --aapt2="$runfiles/{aapt2}" --ks="$runfiles/{keystore}" --ks-pass=pass:{password} \\
+  --ks-key-alias={alias} --key-pass=pass:{password}
+bundletool install-apks --apks="$work/app.apks" --adb="$adb" "${{device[@]}}"
+{reverse}"$adb" shell monkey -p "{package}" -c android.intent.category.LAUNCHER 1 >/dev/null
+echo "Launched {package} from its app bundle"
+"""
+
+def _android_install_bundle_impl(ctx):
+    info = ctx.attr.apk[AndroidApkInfo]
+    runtime = ctx.attr._jdk[java_common.JavaRuntimeInfo]
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    classpath = ":".join(['$runfiles/' + _rlocation(ctx.workspace_name, f.short_path) for f in ctx.files._bundletool_classpath])
+    adb = _rlocation(ctx.workspace_name, ctx.file._adb.short_path)
+    ctx.actions.write(script, _INSTALL_BUNDLE_SCRIPT.format(
+        name = ctx.attr.apk.label.name,
+        java = _rlocation(ctx.workspace_name, runtime.java_executable_runfiles_path),
+        classpath = classpath,
+        adb = adb,
+        aapt2 = _rlocation(ctx.workspace_name, ctx.file._aapt2.short_path),
+        aab = _rlocation(ctx.workspace_name, info.aab.short_path),
+        keystore = _rlocation(ctx.workspace_name, ctx.file.keystore.short_path),
+        password = ctx.attr.keystore_password,
+        alias = ctx.attr.key_alias,
+        package = ctx.attr.package,
+        reverse = "".join(['"$adb" reverse tcp:{0} tcp:{0}\n'.format(p) for p in ctx.attr.reverse_ports]),
+    ), is_executable = True)
+    runfiles = ctx.runfiles(
+        files = [info.aab, ctx.file.keystore, ctx.file._adb, ctx.file._aapt2] + ctx.files._bundletool_classpath,
+        transitive_files = runtime.files,
+    )
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+android_install_bundle = rule(
+    implementation = _android_install_bundle_impl,
+    doc = "`bazel run` target that installs an app from its .aab through bundletool, as Play would deliver it.",
+    executable = True,
+    attrs = {
+        "apk": attr.label(providers = [AndroidApkInfo], mandatory = True),
+        "key_alias": attr.string(mandatory = True),
+        "keystore": attr.label(allow_single_file = True, mandatory = True),
+        "keystore_password": attr.string(mandatory = True),
+        "package": attr.string(mandatory = True),
+        "reverse_ports": attr.int_list(),
+        # The Maven build of bundletool doesn't embed aapt2, which build-apks needs.
+        "_aapt2": attr.label(default = "@rn_android_sdk//:aapt2", allow_single_file = True),
+        "_adb": attr.label(default = "@rn_android_sdk//:adb", allow_single_file = True),
+        "_bundletool_classpath": attr.label(default = "@rn_bundletool_maven//:all"),
         "_jdk": attr.label(default = "@rules_java//toolchains:remotejdk_21", providers = [java_common.JavaRuntimeInfo]),
     },
 )

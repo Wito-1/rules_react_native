@@ -1,5 +1,8 @@
 exports_files([
+    "maven_bundletool_lock.json",
+    "maven_bundletool_spec.json",
     "debug.keystore",
+    "proguard-defaults.pro",
     "maven_kotlin_lock.json",
     "maven_kotlin_spec.json",
     "maven_tools_lock.json",

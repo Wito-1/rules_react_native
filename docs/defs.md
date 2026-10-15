@@ -11,8 +11,8 @@ load("@rules_react_native//react_native:defs.bzl", "react_native_android_library
 
 react_native_android_library(<a href="#react_native_android_library-name">name</a>, <a href="#react_native_android_library-deps">deps</a>, <a href="#react_native_android_library-srcs">srcs</a>, <a href="#react_native_android_library-assets">assets</a>, <a href="#react_native_android_library-build_config">build_config</a>, <a href="#react_native_android_library-build_config_fields">build_config_fields</a>,
                              <a href="#react_native_android_library-cc_includes">cc_includes</a>, <a href="#react_native_android_library-cc_srcs">cc_srcs</a>, <a href="#react_native_android_library-codegen">codegen</a>, <a href="#react_native_android_library-component_descriptors">component_descriptors</a>, <a href="#react_native_android_library-cxx_modules">cxx_modules</a>,
-                             <a href="#react_native_android_library-exports">exports</a>, <a href="#react_native_android_library-javacopts">javacopts</a>, <a href="#react_native_android_library-kotlincopts">kotlincopts</a>, <a href="#react_native_android_library-manifest">manifest</a>, <a href="#react_native_android_library-package">package</a>, <a href="#react_native_android_library-react_native">react_native</a>,
-                             <a href="#react_native_android_library-react_packages">react_packages</a>, <a href="#react_native_android_library-res">res</a>)
+                             <a href="#react_native_android_library-exports">exports</a>, <a href="#react_native_android_library-javacopts">javacopts</a>, <a href="#react_native_android_library-kotlincopts">kotlincopts</a>, <a href="#react_native_android_library-manifest">manifest</a>, <a href="#react_native_android_library-package">package</a>, <a href="#react_native_android_library-proguard_specs">proguard_specs</a>,
+                             <a href="#react_native_android_library-react_native">react_native</a>, <a href="#react_native_android_library-react_packages">react_packages</a>, <a href="#react_native_android_library-res">res</a>)
 </pre>
 
 A library of a React Native Android app: Java sources, resources, manifest entries,
@@ -44,6 +44,7 @@ its `react_packages` are added to PackageList.
 | <a id="react_native_android_library-kotlincopts"></a>kotlincopts |  Extra kotlinc flags, after the defaults (`-jvm-target 17`).   | List of strings | optional |  `[]`  |
 | <a id="react_native_android_library-manifest"></a>manifest |  Optional; components, permissions and meta-data to merge into the app's manifest.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="react_native_android_library-package"></a>package |  Java package of the library's R class (AGP's `namespace`).   | String | required |  |
+| <a id="react_native_android_library-proguard_specs"></a>proguard_specs |  R8/ProGuard rules apps that minify must apply (AGP's `consumerProguardFiles`).   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="react_native_android_library-react_native"></a>react_native |  Compile and link resources against the consumer's release React Native set. It stays compile-only; the app supplies the runtime variant.   | Boolean | optional |  `True`  |
 | <a id="react_native_android_library-react_packages"></a>react_packages |  Fully-qualified ReactPackage classes the app's PackageList must instantiate.   | List of strings | optional |  `[]`  |
 | <a id="react_native_android_library-res"></a>res |  Files under one res/ directory.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
@@ -56,11 +57,13 @@ its `react_packages` are added to PackageList.
 <pre>
 load("@rules_react_native//react_native:defs.bzl", "react_native_apk_test")
 
-react_native_apk_test(<a href="#react_native_apk_test-name">name</a>, <a href="#react_native_apk_test-abis">abis</a>, <a href="#react_native_apk_test-apk">apk</a>, <a href="#react_native_apk_test-assets">assets</a>, <a href="#react_native_apk_test-entries">entries</a>, <a href="#react_native_apk_test-native_libs">native_libs</a>, <a href="#react_native_apk_test-package">package</a>)
+react_native_apk_test(<a href="#react_native_apk_test-name">name</a>, <a href="#react_native_apk_test-aab">aab</a>, <a href="#react_native_apk_test-abis">abis</a>, <a href="#react_native_apk_test-apk">apk</a>, <a href="#react_native_apk_test-assets">assets</a>, <a href="#react_native_apk_test-entries">entries</a>, <a href="#react_native_apk_test-native_libs">native_libs</a>, <a href="#react_native_apk_test-package">package</a>)
 </pre>
 
 Checks a built APK without a device: manifest package, 16 KiB alignment, signature, and
-that every ABI ships the expected native libraries uncompressed, plus the expected assets.
+that every ABI ships the expected native libraries uncompressed, plus the expected assets. With
+`aab = True`, also validates the app's bundle with bundletool and checks it carries the same
+libraries and assets plus native debug symbols.
 
 **ATTRIBUTES**
 
@@ -68,6 +71,7 @@ that every ABI ships the expected native libraries uncompressed, plus the expect
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="react_native_apk_test-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="react_native_apk_test-aab"></a>aab |  Also check the app bundle (`apk` must be a `react_native_android_app`).   | Boolean | optional |  `False`  |
 | <a id="react_native_apk_test-abis"></a>abis |  Exactly the ABIs the APK must ship.   | List of strings | optional |  `["arm64-v8a", "x86_64"]`  |
 | <a id="react_native_apk_test-apk"></a>apk |  -   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="react_native_apk_test-assets"></a>assets |  Paths under assets/ that must exist, e.g. index.android.bundle.   | List of strings | optional |  `[]`  |
@@ -139,7 +143,8 @@ load("@rules_react_native//react_native:defs.bzl", "react_native_npm_library")
 
 react_native_npm_library(<a href="#react_native_npm_library-name">name</a>, <a href="#react_native_npm_library-deps">deps</a>, <a href="#react_native_npm_library-build_config">build_config</a>, <a href="#react_native_npm_library-build_config_fields">build_config_fields</a>, <a href="#react_native_npm_library-cc_dirs">cc_dirs</a>, <a href="#react_native_npm_library-cc_includes">cc_includes</a>,
                          <a href="#react_native_npm_library-codegen">codegen</a>, <a href="#react_native_npm_library-component_descriptors">component_descriptors</a>, <a href="#react_native_npm_library-exports">exports</a>, <a href="#react_native_npm_library-java_dirs">java_dirs</a>, <a href="#react_native_npm_library-javacopts">javacopts</a>, <a href="#react_native_npm_library-kotlincopts">kotlincopts</a>,
-                         <a href="#react_native_npm_library-manifest">manifest</a>, <a href="#react_native_npm_library-npm_package">npm_package</a>, <a href="#react_native_npm_library-package">package</a>, <a href="#react_native_npm_library-react_native">react_native</a>, <a href="#react_native_npm_library-react_packages">react_packages</a>, <a href="#react_native_npm_library-res_dir">res_dir</a>)
+                         <a href="#react_native_npm_library-manifest">manifest</a>, <a href="#react_native_npm_library-npm_package">npm_package</a>, <a href="#react_native_npm_library-package">package</a>, <a href="#react_native_npm_library-proguard_specs">proguard_specs</a>, <a href="#react_native_npm_library-react_native">react_native</a>, <a href="#react_native_npm_library-react_packages">react_packages</a>,
+                         <a href="#react_native_npm_library-res_dir">res_dir</a>)
 </pre>
 
 The Android side of a React Native library installed from npm, built from its sources in
@@ -169,6 +174,7 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
 | <a id="react_native_npm_library-manifest"></a>manifest |  Library manifest; empty for none.   | String | optional |  `"android/src/main/AndroidManifest.xml"`  |
 | <a id="react_native_npm_library-npm_package"></a>npm_package |  The package's link target from `npm_link_all_packages`, e.g. `:node_modules/react-native-safe-area-context`.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="react_native_npm_library-package"></a>package |  Java package of the library's R class (AGP's `namespace`).   | String | required |  |
+| <a id="react_native_npm_library-proguard_specs"></a>proguard_specs |  R8/ProGuard rules files in the package that apps must apply (`consumerProguardFiles`), e.g. `["android/proguard-rules.pro"]`.   | List of strings | optional |  `[]`  |
 | <a id="react_native_npm_library-react_native"></a>react_native |  Compile and link resources against the consumer's release React Native set. It stays compile-only; the app supplies the runtime variant.   | Boolean | optional |  `True`  |
 | <a id="react_native_npm_library-react_packages"></a>react_packages |  Fully-qualified ReactPackage classes the app's PackageList must instantiate.   | List of strings | optional |  `[]`  |
 | <a id="react_native_npm_library-res_dir"></a>res_dir |  res/ directory, if the library has resources, e.g. `android/src/main/res`.   | String | optional |  `""`  |
@@ -184,14 +190,19 @@ load("@rules_react_native//react_native:defs.bzl", "react_native_android_app")
 react_native_android_app(<a href="#react_native_android_app-name">name</a>, <a href="#react_native_android_app-package">package</a>, <a href="#react_native_android_app-manifest">manifest</a>, <a href="#react_native_android_app-application_id">application_id</a>, <a href="#react_native_android_app-build_config_fields">build_config_fields</a>, <a href="#react_native_android_app-bundle">bundle</a>,
                          <a href="#react_native_android_app-maven">maven</a>, <a href="#react_native_android_app-maven_debug">maven_debug</a>, <a href="#react_native_android_app-srcs">srcs</a>, <a href="#react_native_android_app-res">res</a>, <a href="#react_native_android_app-assets">assets</a>, <a href="#react_native_android_app-deps">deps</a>, <a href="#react_native_android_app-codegen">codegen</a>, <a href="#react_native_android_app-react_packages">react_packages</a>,
                          <a href="#react_native_android_app-min_sdk">min_sdk</a>, <a href="#react_native_android_app-target_sdk">target_sdk</a>, <a href="#react_native_android_app-version_code">version_code</a>, <a href="#react_native_android_app-version_name">version_name</a>, <a href="#react_native_android_app-abis">abis</a>, <a href="#react_native_android_app-debug">debug</a>, <a href="#react_native_android_app-edge_to_edge">edge_to_edge</a>,
-                         <a href="#react_native_android_app-manifest_placeholders">manifest_placeholders</a>, <a href="#react_native_android_app-adb_reverse">adb_reverse</a>, <a href="#react_native_android_app-keystore">keystore</a>, <a href="#react_native_android_app-keystore_password">keystore_password</a>, <a href="#react_native_android_app-key_alias">key_alias</a>,
-                         <a href="#react_native_android_app-javacopts">javacopts</a>, <a href="#react_native_android_app-kotlincopts">kotlincopts</a>, <a href="#react_native_android_app-kwargs">**kwargs</a>)
+                         <a href="#react_native_android_app-manifest_placeholders">manifest_placeholders</a>, <a href="#react_native_android_app-adb_reverse">adb_reverse</a>, <a href="#react_native_android_app-minify">minify</a>, <a href="#react_native_android_app-proguard_specs">proguard_specs</a>, <a href="#react_native_android_app-keystore">keystore</a>,
+                         <a href="#react_native_android_app-keystore_password">keystore_password</a>, <a href="#react_native_android_app-key_alias">key_alias</a>, <a href="#react_native_android_app-javacopts">javacopts</a>, <a href="#react_native_android_app-kotlincopts">kotlincopts</a>, <a href="#react_native_android_app-kwargs">**kwargs</a>)
 </pre>
 
 Builds a signed React Native APK `<name>.apk` from Java or Kotlin sources and a `react_native_bundle`.
 
 Also defines `<name>.install` (`bazel run` installs and launches the APK on a device) and
-`<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`).
+`<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`),
+and for Play: `<name>.aab` (the unsigned Android App Bundle, carrying the R8 mapping and native
+debug symbols in its metadata), `<name>.aab.sign` (`bazel run` signs it with an upload key passed
+at run time) and `<name>.aab.install` (`bazel run` installs it through bundletool, as Play
+would). The output groups `native_debug_symbols` (Play's native-debug-symbols.zip),
+`proguard_mapping` and the bundle's `sourcemap` are what crash reporters need.
 
 The React Native runtime (react-android, Hermes) comes prebuilt from Maven; the only native
 code built is the app's small libappmodules.so (React Native's default OnLoad.cpp). The sources
@@ -227,6 +238,8 @@ ReactNativeApplicationEntryPoint) are generated here.
 | <a id="react_native_android_app-edge_to_edge"></a>edge_to_edge |  Sets BuildConfig.IS_EDGE_TO_EDGE_ENABLED.   |  `False` |
 | <a id="react_native_android_app-manifest_placeholders"></a>manifest_placeholders |  Extra `${...}` substitutions for the manifest merger. `applicationId` and `usesCleartextTraffic` (true in debug) are always set.   |  `{}` |
 | <a id="react_native_android_app-adb_reverse"></a>adb_reverse |  Host ports `<name>.install` exposes on the device's localhost (`adb reverse`), e.g. a development backend's.   |  `[]` |
+| <a id="react_native_android_app-minify"></a>minify |  Shrink, optimize and obfuscate the app's code with R8 (Gradle's `minifyEnabled`). Rules: the ruleset's defaults, aapt2's keep rules, every library's consumer rules (AAR proguard.txt, rules embedded in jars) and `proguard_specs`.   |  `False` |
+| <a id="react_native_android_app-proguard_specs"></a>proguard_specs |  The app's own R8 rules (`proguard-rules.pro`).   |  `[]` |
 | <a id="react_native_android_app-keystore"></a>keystore |  Keystore for the in-build signature. Defaults to a public debug key; never ship that to a store. Sign release builds with `<name>.sign` instead, so the key and its password stay out of the build.   |  `Label("@rules_react_native//react_native/android:debug.keystore")` |
 | <a id="react_native_android_app-keystore_password"></a>keystore_password |  Password of `keystore` and of its key. It's an action argument, so only for keys that aren't secret.   |  `"android"` |
 | <a id="react_native_android_app-key_alias"></a>key_alias |  Alias of the signing key in `keystore`.   |  `"androiddebugkey"` |
@@ -248,7 +261,9 @@ react_native_bundle(<a href="#react_native_bundle-name">name</a>, <a href="#reac
 Bundles the app rooted at this package with Metro, as `react-native bundle` would.
 
 The default output is `index.<platform>.bundle` (Hermes bytecode unless `hermes = False`); the
-output group `assets` is the directory of image assets Metro wrote (Android `drawable-*` resource layout for "android", the iOS asset layout for "ios").
+output group `assets` is the directory of image assets Metro wrote (Android `drawable-*` resource layout for "android", the iOS asset layout for "ios"),
+and `sourcemap` is `index.<platform>.bundle.map`, mapping the bytecode back to the sources (for
+crash reporters; a release app's AAB carries it in its metadata).
 
 
 **PARAMETERS**

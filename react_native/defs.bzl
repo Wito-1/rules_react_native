@@ -1,7 +1,15 @@
 """Public API of the React Native ruleset. See README.md."""
 
 load("@rn_profile//:profile.bzl", "APPMODULES_COPTS", "COMPILE_SDK")
-load("//react_native/android/private:android_app.bzl", "android_apk", "android_app_resources", "android_install", "android_sign")
+load(
+    "//react_native/android/private:android_app.bzl",
+    "android_apk",
+    "android_app_resources",
+    "android_install",
+    "android_install_bundle",
+    "android_sign",
+    "android_sign_bundle",
+)
 load("//react_native/android/private:apk_test.bzl", _react_native_apk_test = "react_native_apk_test")
 load("//react_native/android/private:appmodules.bzl", "react_native_appmodules")
 load("//react_native/android/private:java.bzl", _react_native_java_library = "react_native_java_library")
@@ -48,6 +56,8 @@ def react_native_android_app(
         edge_to_edge = False,
         manifest_placeholders = {},
         adb_reverse = [],
+        minify = False,
+        proguard_specs = [],
         keystore = Label("//react_native/android:debug.keystore"),
         keystore_password = "android",
         key_alias = "androiddebugkey",
@@ -57,7 +67,12 @@ def react_native_android_app(
     """Builds a signed React Native APK `<name>.apk` from Java or Kotlin sources and a `react_native_bundle`.
 
     Also defines `<name>.install` (`bazel run` installs and launches the APK on a device) and
-    `<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`).
+    `<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`),
+    and for Play: `<name>.aab` (the unsigned Android App Bundle, carrying the R8 mapping and native
+    debug symbols in its metadata), `<name>.aab.sign` (`bazel run` signs it with an upload key passed
+    at run time) and `<name>.aab.install` (`bazel run` installs it through bundletool, as Play
+    would). The output groups `native_debug_symbols` (Play's native-debug-symbols.zip),
+    `proguard_mapping` and the bundle's `sourcemap` are what crash reporters need.
 
     The React Native runtime (react-android, Hermes) comes prebuilt from Maven; the only native
     code built is the app's small libappmodules.so (React Native's default OnLoad.cpp). The sources
@@ -104,6 +119,10 @@ def react_native_android_app(
         edge_to_edge: Sets BuildConfig.IS_EDGE_TO_EDGE_ENABLED.
         adb_reverse: Host ports `<name>.install` exposes on the device's localhost (`adb reverse`),
             e.g. a development backend's.
+        minify: Shrink, optimize and obfuscate the app's code with R8 (Gradle's `minifyEnabled`).
+            Rules: the ruleset's defaults, aapt2's keep rules, every library's consumer rules
+            (AAR proguard.txt, rules embedded in jars) and `proguard_specs`.
+        proguard_specs: The app's own R8 rules (`proguard-rules.pro`).
         manifest_placeholders: Extra `${...}` substitutions for the manifest merger. `applicationId`
             and `usesCleartextTraffic` (true in debug) are always set.
         keystore: Keystore for the in-build signature. Defaults to a public debug key; never ship
@@ -182,6 +201,8 @@ def react_native_android_app(
         app_assets = assets,
         abis = abis,
         debug = debug,
+        minify = minify,
+        proguard_specs = proguard_specs,
         keystore = keystore,
         keystore_password = keystore_password,
         key_alias = key_alias,
@@ -198,5 +219,26 @@ def react_native_android_app(
     android_sign(
         name = name + ".sign",
         apk = name,
+        **kwargs
+    )
+    native.filegroup(
+        name = name + ".aab",
+        srcs = [name],
+        output_group = "aab",
+        **kwargs
+    )
+    android_sign_bundle(
+        name = name + ".aab.sign",
+        apk = name,
+        **kwargs
+    )
+    android_install_bundle(
+        name = name + ".aab.install",
+        apk = name,
+        keystore = keystore,
+        keystore_password = keystore_password,
+        key_alias = key_alias,
+        package = application_id or package,
+        reverse_ports = adb_reverse,
         **kwargs
     )

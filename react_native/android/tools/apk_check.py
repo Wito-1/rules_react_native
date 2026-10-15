@@ -1,7 +1,9 @@
 """Checks that an APK is installable and complete without a device.
 
 Runs the SDK's own verifiers (aapt2 for the manifest, zipalign for 16 KiB page alignment,
-apksigner for the signature) and checks the archive layout React Native needs at startup.
+apksigner for the signature) and checks the archive layout React Native needs at startup. With
+--aab it also validates the app bundle with bundletool and checks that it carries the same
+content plus the native debug symbols Play reads from its metadata.
 """
 
 import argparse
@@ -35,6 +37,8 @@ def main() -> int:
         help="Path under assets/ that must exist",
     )
     parser.add_argument("--entry", action="append", default=[], help="Any other path that must exist in the APK")
+    parser.add_argument("--aab", help="The app's bundle, checked as well")
+    parser.add_argument("--bundletool_classpath", action="append", default=[])
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -103,6 +107,9 @@ def main() -> int:
         if entry not in infos:
             failures.append(f"missing {entry}")
 
+    if args.aab:
+        failures.extend(_check_bundle(args))
+
     if failures:
         print(f"{args.apk}: {len(failures)} problem(s)", file=sys.stderr)
         for f in failures:
@@ -110,6 +117,38 @@ def main() -> int:
         return 1
     print(f"{args.apk}: OK ({len(infos)} entries, ABIs {sorted(abis)})")
     return 0
+
+
+def _check_bundle(args: argparse.Namespace) -> list[str]:
+    failures = []
+    code, out = _run(
+        [
+            args.java,
+            "-cp",
+            ":".join(args.bundletool_classpath),
+            "com.android.tools.build.bundletool.BundleToolMain",
+            "validate",
+            "--bundle=" + args.aab,
+        ]
+    )
+    if code:
+        failures.append(f"bundletool validate failed:\n{out}")
+    with zipfile.ZipFile(args.aab) as aab:
+        names = set(aab.namelist())
+    for required in ("base/manifest/AndroidManifest.xml", "base/resources.pb", "base/dex/classes.dex"):
+        if required not in names:
+            failures.append(f"bundle is missing {required}")
+    for abi in args.abi:
+        for lib in args.native_lib:
+            if f"base/lib/{abi}/{lib}" not in names:
+                failures.append(f"bundle is missing base/lib/{abi}/{lib}")
+        symbols = f"BUNDLE-METADATA/com.android.tools.build.debugsymbols/{abi}/libappmodules.so.dbg"
+        if symbols not in names:
+            failures.append(f"bundle is missing {symbols}")
+    for asset in args.asset:
+        if f"base/assets/{asset}" not in names:
+            failures.append(f"bundle is missing base/assets/{asset}")
+    return failures
 
 
 if __name__ == "__main__":

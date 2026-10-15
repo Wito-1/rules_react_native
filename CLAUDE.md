@@ -56,6 +56,16 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   library's hand-written `<lib>.h` shadows the generated one. `component_descriptors` replaces
   `<lib>_registerComponentDescriptorsFromCodegen` (codegen `interfaceOnly` components have no
   generated descriptor); `cxx_modules` fills `cxxModuleProvider`.
+- **Shipping outputs**: `android_apk` dexes with D8, or R8 when `minify` (`tools/r8.py` gathers the
+  rules: defaults, aapt2 `--proguard`, `AndroidLibraryInfo.proguard_specs`, jars'
+  `META-INF/com.android.tools/r8*` over `META-INF/proguard`). The `.aab` reuses the APK's
+  packaging (`build_apk.py --bundle_module` on `aapt2 convert --output-format proto` resources) and
+  bundletool from `@rn_bundletool_maven`. That Maven build embeds no aapt2 (pass `--aapt2`) and
+  needs kotlin-stdlib it doesn't declare. Don't sign the .aab in the build (jarsigner's signing time
+  breaks reproducibility). `libappmodules.so` links with `-g`; the packaged copy is
+  `llvm-objcopy --strip-unneeded`, the unstripped one is `native_debug_libs`.
+- **Source maps**: the CLI ignores `sourcemapSourcesRoot`, so `bundle.cjs` relativizes `sources`
+  itself; hermesc writes `<bundle>.map`, so the composed map goes through a temporary name.
 - **`-DANDROID`** is in the appmodules copts because the NDK's CMake toolchain defines it and
   libraries guard Android-only code (folly::dynamic state, MapBuffer) with it rather than
   `__ANDROID__`. Without it, react-native-safe-area-context's state lacks `getDynamic`.
@@ -95,10 +105,10 @@ publish-to-bcr templates.
 | Path | Contents |
 | --- | --- |
 | [`react_native/`](react_native) | `defs.bzl`, `extensions.bzl`, `bzl_library` targets |
-| [`react_native/android/`](react_native/android) | Tools and kotlinc lockfiles/specs and the public debug keystore |
+| [`react_native/android/`](react_native/android) | Tools, kotlinc and bundletool lockfiles/specs, default R8 rules, the public debug keystore |
 | [`react_native/android/private/`](react_native/android/private) | Repository rules, providers, app/library/npm-library/java/appmodules/apk-test/sign/pin rules, versions |
 | [`react_native/android/native/`](react_native/android/native) | `OnLoad.cpp` and `autolinking.h` |
-| [`react_native/android/tools/`](react_native/android/tools) | Python tools (`maven_resolve`, `gen_r`, `build_apk`, `javac`, `own_r_txt`, `apk_check`) and their unittest tests |
+| [`react_native/android/tools/`](react_native/android/tools) | Python tools (`maven_resolve`, `gen_r`, `build_apk`, `javac`, `r8`, `own_r_txt`, `apk_check`) and their unittest tests |
 | [`react_native/js/`](react_native/js) | `bundle.cjs`, `dev_server.cjs`, `codegen.cjs`, the shared `metro_config.cjs`, and their rules |
 | [`docs/`](docs) | Stardoc-generated API reference (`bazel run //docs:update`) |
 | [`examples/`](examples) | Consumer module: `hello`, `native_modules`, `cxx_module`, `third_party`, `assets`, `fleet`, `brownfield`, `variants`, `connect` (the README's Examples table), Maven specs/lockfiles, `:pin` |

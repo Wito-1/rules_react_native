@@ -55,6 +55,7 @@ react_native_bundle(
 
 react_native_android_app(
     name = "native_modules",
+    minify = True,
     srcs = _JAVA_SRCS,
     bundle = ":bundle_android",
     manifest = "android/AndroidManifest.xml",
@@ -81,6 +82,7 @@ react_native_dev_server(
 
 react_native_apk_test(
     name = "native_modules_apk_test",
+    aab = True,
     apk = ":native_modules",
     assets = [
         "index.android.bundle",

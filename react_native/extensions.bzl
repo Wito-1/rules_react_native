@@ -1,7 +1,7 @@
 """The `react_native` module extension.
 
 The ruleset owns the Android SDK, NDK and its host tool jars (`@rn_android_sdk`, `@rn_android_ndk`,
-`@rn_android_tools_maven`, `@rn_kotlin_compiler_maven`). Each consumer supplies the React Native artifact sets it builds against:
+`@rn_android_tools_maven`, `@rn_kotlin_compiler_maven`, `@rn_bundletool_maven`). Each consumer supplies the React Native artifact sets it builds against:
 
 ```starlark
 react_native = use_extension("@rules_react_native//react_native:extensions.bzl", "react_native")
@@ -128,7 +128,7 @@ def _react_native_impl(mctx):
         name = "rn_android_ndk",
         linux_repo = "rn_android_ndk_linux",
         macos_repo = "rn_android_ndk_macos",
-        targets = ["clang", "toolchain_files"],
+        targets = ["clang", "objcopy", "toolchain_files"],
     )
     profile_repository(
         name = "rn_profile",
@@ -153,6 +153,10 @@ def _react_native_impl(mctx):
     java_maven_repository(
         name = "rn_kotlin_compiler_maven",
         lock_file = "//react_native/android:maven_kotlin_lock.json",
+    )
+    java_maven_repository(
+        name = "rn_bundletool_maven",
+        lock_file = "//react_native/android:maven_bundletool_lock.json",
     )
     return mctx.extension_metadata(reproducible = True)
 

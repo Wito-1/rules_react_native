@@ -185,6 +185,7 @@ def _android_maven_repository_impl(rctx):
                 "manifest": repr("{}/AndroidManifest.xml".format(name)),
                 "native_libs": 'glob(["{}/jni/*/*.so"], allow_empty = True)'.format(name),
                 "prefab_headers": 'glob(["{}/prefab/modules/*/include/**"], allow_empty = True)'.format(name),
+                "proguard_specs": 'glob(["{}/proguard.txt"], allow_empty = True)'.format(name),
                 "r_txt": 'glob(["{}/R.txt"], allow_empty = True)'.format(name),
                 "res": 'glob(["{}/res/**"], exclude = ["**/.*"], allow_empty = True)'.format(name),
             })
@@ -245,6 +246,12 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "clang",
     srcs = ["{tc}/bin/clang++"],
+)
+
+# llvm-strip is a symlink to it; strips libappmodules.so for packaging after a -g link.
+filegroup(
+    name = "objcopy",
+    srcs = ["{tc}/bin/llvm-objcopy"],
 )
 
 # Only what compiling and linking one shared library needs: clang finds bin/../sysroot and its

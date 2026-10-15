@@ -3,7 +3,7 @@
 The `react_native` module extension.
 
 The ruleset owns the Android SDK, NDK and its host tool jars (`@rn_android_sdk`, `@rn_android_ndk`,
-`@rn_android_tools_maven`, `@rn_kotlin_compiler_maven`). Each consumer supplies the React Native artifact sets it builds against:
+`@rn_android_tools_maven`, `@rn_kotlin_compiler_maven`, `@rn_bundletool_maven`). Each consumer supplies the React Native artifact sets it builds against:
 
 ```starlark
 react_native = use_extension("@rules_react_native//react_native:extensions.bzl", "react_native")
