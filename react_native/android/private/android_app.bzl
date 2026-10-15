@@ -1,0 +1,433 @@
+"""Rules that link an Android app's resources and package it into a signed APK."""
+
+load("@rules_java//java/common:java_common.bzl", "java_common")
+load("@rules_java//java/common:java_info.bzl", "JavaInfo")
+load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos")
+
+AndroidAppResourcesInfo = provider(
+    doc = "Linked resources of an app, consumed by `android_apk`.",
+    fields = {
+        "resources_apk": "File: APK written by `aapt2 link` (manifest, resources.arsc, res/)",
+        "manifest": "File: the merged AndroidManifest.xml",
+        "min_sdk": "int",
+    },
+)
+
+_BUILD_CONFIG = """\
+package {package};
+
+public final class BuildConfig {{
+  public static final boolean DEBUG = {debug};
+  public static final String APPLICATION_ID = "{package}";
+  public static final String BUILD_TYPE = "{build_type}";
+  public static final int VERSION_CODE = {version_code};
+  public static final String VERSION_NAME = "{version_name}";
+  public static final boolean IS_NEW_ARCHITECTURE_ENABLED = true;
+  public static final boolean IS_HERMES_ENABLED = true;
+  public static final boolean IS_EDGE_TO_EDGE_ENABLED = {edge_to_edge};
+}}
+"""
+
+# Mirrors GenerateEntryPointTask in @react-native/gradle-plugin; apps call loadReactNative() from
+# Application.onCreate().
+_ENTRY_POINT = """\
+package com.facebook.react;
+
+import android.content.Context;
+import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint;
+import com.facebook.react.soloader.OpenSourceMergedSoMapping;
+import com.facebook.react.views.view.WindowUtilKt;
+import com.facebook.soloader.SoLoader;
+import java.io.IOException;
+
+public class ReactNativeApplicationEntryPoint {{
+  public static void loadReactNative(Context context) {{
+    try {{
+      SoLoader.init(context, OpenSourceMergedSoMapping.INSTANCE);
+    }} catch (IOException error) {{
+      throw new RuntimeException(error);
+    }}
+    if ({package}.BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {{
+      DefaultNewArchitectureEntryPoint.load();
+    }}
+    if ({package}.BuildConfig.IS_EDGE_TO_EDGE_ENABLED) {{
+      WindowUtilKt.setEdgeToEdgeFeatureFlagOn();
+    }}
+  }}
+}}
+"""
+
+# Mirrors GeneratePackageListTask in @react-native/gradle-plugin, with `react_packages` standing in
+# for autolinking.
+_PACKAGE_LIST = """\
+package com.facebook.react;
+
+import android.app.Application;
+import com.facebook.react.shell.MainPackageConfig;
+import com.facebook.react.shell.MainReactPackage;
+import java.util.ArrayList;
+import java.util.Arrays;
+
+@SuppressWarnings("deprecation")
+public class PackageList {{
+  private final MainPackageConfig mConfig;
+
+  public PackageList(ReactNativeHost reactNativeHost) {{
+    this(reactNativeHost, null);
+  }}
+
+  public PackageList(Application application) {{
+    this(application, null);
+  }}
+
+  public PackageList(ReactNativeHost reactNativeHost, MainPackageConfig config) {{
+    mConfig = config;
+  }}
+
+  public PackageList(Application application, MainPackageConfig config) {{
+    mConfig = config;
+  }}
+
+  public ArrayList<ReactPackage> getPackages() {{
+    return new ArrayList<>(Arrays.<ReactPackage>asList(
+      new MainReactPackage(mConfig){extra}
+    ));
+  }}
+}}
+"""
+
+def _run_java(ctx, main_class, classpath, arguments, inputs, jvm_flags = [], **kwargs):
+    runtime = ctx.attr._java_runtime[java_common.JavaRuntimeInfo]
+    jvm_args = ctx.actions.args()
+    jvm_args.add_all(jvm_flags)
+    jvm_args.add_joined("-cp", classpath, join_with = ":")
+    jvm_args.add(main_class)
+    ctx.actions.run(
+        executable = runtime.java_executable_exec_path,
+        arguments = [jvm_args] + arguments,
+        inputs = depset(classpath + inputs),
+        tools = runtime.files,
+        **kwargs
+    )
+
+def _merge_manifests(ctx, libraries):
+    merged = ctx.actions.declare_file(ctx.label.name + "/AndroidManifest.xml")
+    args = ctx.actions.args()
+    args.add("--main", ctx.file.manifest)
+    lib_manifests = [lib.manifest for lib in libraries]
+    if lib_manifests:
+        args.add_joined("--libs", lib_manifests, join_with = ":")
+    args.add("--property", "PACKAGE=" + ctx.attr.package)
+    args.add("--property", "MIN_SDK_VERSION=%d" % ctx.attr.min_sdk)
+    args.add("--property", "TARGET_SDK_VERSION=%d" % ctx.attr.target_sdk)
+    args.add("--property", "VERSION_CODE=%d" % ctx.attr.version_code)
+    args.add("--property", "VERSION_NAME=" + ctx.attr.version_name)
+
+    # The merger derives ${applicationId} from PACKAGE itself and rejects a duplicate.
+    for k, v in sorted(ctx.attr.manifest_placeholders.items()):
+        args.add("--placeholder", "%s=%s" % (k, v))
+    args.add("--out", merged)
+    _run_java(
+        ctx,
+        main_class = "com.android.manifmerger.Merger",
+        classpath = ctx.files._manifest_merger_classpath,
+        arguments = [args],
+        inputs = [ctx.file.manifest] + lib_manifests,
+        outputs = [merged],
+        mnemonic = "AndroidManifestMerger",
+        progress_message = "Merging Android manifests of %{label}",
+    )
+    return merged
+
+def _compile_res_dir(ctx, name, res_dir, inputs):
+    flata = ctx.actions.declare_file(ctx.label.name + "/" + name + ".flata")
+    args = ctx.actions.args()
+    args.add_all(["compile", "--legacy", "--dir", res_dir, "-o", flata])
+    ctx.actions.run(
+        executable = ctx.file._aapt2,
+        arguments = [args],
+        inputs = inputs,
+        outputs = [flata],
+        mnemonic = "Aapt2Compile",
+        progress_message = "Compiling Android resources of %{label}",
+    )
+    return flata
+
+def _res_root(files):
+    root = None
+    for f in files:
+        idx = f.path.find("/res/")
+        if idx < 0:
+            fail("resource %s is not under a res/ directory" % f.path)
+        candidate = f.path[:idx + len("/res")]
+        if root != None and root != candidate:
+            fail("all `res` files must share one res/ directory, got %s and %s" % (root, candidate))
+        root = candidate
+    return root
+
+def _android_app_resources_impl(ctx):
+    infos = collect_android_infos(ctx.attr.deps)
+    libraries = depset(transitive = [i.resources for i in infos], order = "postorder").to_list()
+
+    merged_manifest = _merge_manifests(ctx, libraries)
+
+    overlays = [lib.flata for lib in libraries if lib.flata]
+    for i, tree in enumerate(ctx.files.generated_res):
+        overlays.append(_compile_res_dir(ctx, "generated_%d" % i, tree.path, [tree]))
+    if ctx.files.res:
+        overlays.append(_compile_res_dir(ctx, "app", _res_root(ctx.files.res), ctx.files.res))
+
+    resources_apk = ctx.actions.declare_file(ctx.label.name + "/resources.ap_")
+    r_txt = ctx.actions.declare_file(ctx.label.name + "/R.txt")
+    args = ctx.actions.args()
+    args.add("link")
+    args.add("-o", resources_apk)
+    args.add("-I", ctx.file._android_jar)
+    args.add("--manifest", merged_manifest)
+    args.add("--min-sdk-version", str(ctx.attr.min_sdk))
+    args.add("--target-sdk-version", str(ctx.attr.target_sdk))
+    args.add("--version-code", str(ctx.attr.version_code))
+    args.add("--version-name", ctx.attr.version_name)
+    args.add("--auto-add-overlay")
+    args.add("--no-version-vectors")
+    args.add("--output-text-symbols", r_txt)
+    args.add_all(overlays, before_each = "-R")
+    ctx.actions.run(
+        executable = ctx.file._aapt2,
+        arguments = [args],
+        inputs = [merged_manifest, ctx.file._android_jar] + overlays,
+        outputs = [resources_apk, r_txt],
+        mnemonic = "Aapt2Link",
+        progress_message = "Linking Android resources of %{label}",
+    )
+
+    generated = {
+        ctx.attr.package.replace(".", "/") + "/BuildConfig.java": _BUILD_CONFIG.format(
+            package = ctx.attr.package,
+            debug = "true" if ctx.attr.debug else "false",
+            build_type = "debug" if ctx.attr.debug else "release",
+            version_code = ctx.attr.version_code,
+            version_name = ctx.attr.version_name,
+            edge_to_edge = "true" if ctx.attr.edge_to_edge else "false",
+        ),
+        "com/facebook/react/ReactNativeApplicationEntryPoint.java": _ENTRY_POINT.format(package = ctx.attr.package),
+        "com/facebook/react/PackageList.java": _PACKAGE_LIST.format(
+            extra = "".join([",\n      new %s()" % p for p in ctx.attr.react_packages]),
+        ),
+    }
+    srcjar = ctx.actions.declare_file(ctx.label.name + "/generated.srcjar")
+    gen_args = ctx.actions.args()
+    gen_args.add("--r_txt", r_txt)
+    gen_args.add("--package", ctx.attr.package)
+    gen_inputs = [r_txt]
+    for lib in libraries:
+        if lib.r_txt:
+            gen_args.add("--library", "%s=%s" % (lib.package, lib.r_txt.path))
+            gen_inputs.append(lib.r_txt)
+    for path, content in generated.items():
+        f = ctx.actions.declare_file(ctx.label.name + "/java/" + path)
+        ctx.actions.write(f, content)
+        gen_args.add("--java", "%s=%s" % (path, f.path))
+        gen_inputs.append(f)
+    gen_args.add("--out", srcjar)
+    ctx.actions.run(
+        executable = ctx.executable._gen_r,
+        arguments = [gen_args],
+        inputs = gen_inputs,
+        outputs = [srcjar],
+        mnemonic = "AndroidGenerateR",
+        progress_message = "Generating R classes for %{label}",
+    )
+
+    return [
+        DefaultInfo(files = depset([srcjar])),
+        AndroidAppResourcesInfo(
+            resources_apk = resources_apk,
+            manifest = merged_manifest,
+            min_sdk = ctx.attr.min_sdk,
+        ),
+        OutputGroupInfo(
+            manifest = depset([merged_manifest]),
+            r_txt = depset([r_txt]),
+        ),
+    ]
+
+_SDK_ATTRS = {
+    # The SDK's Java tools and AGP's manifest merger need a newer JVM than the default exec runtime.
+    "_java_runtime": attr.label(default = "@rules_java//toolchains:remotejdk_21", cfg = "exec", providers = [java_common.JavaRuntimeInfo]),
+    "_aapt2": attr.label(default = "@rn_android_sdk//:aapt2", allow_single_file = True, cfg = "exec"),
+    "_android_jar": attr.label(default = "@rn_android_sdk//:android_jar_file", allow_single_file = True),
+}
+
+android_app_resources = rule(
+    implementation = _android_app_resources_impl,
+    doc = "Merges manifests, links resources with aapt2 and writes a srcjar of R classes plus the React Native glue sources the Gradle plugin would generate.",
+    attrs = dict(_SDK_ATTRS, **{
+        "debug": attr.bool(default = False),
+        "deps": attr.label_list(providers = [AndroidLibraryInfo]),
+        "edge_to_edge": attr.bool(default = False),
+        "generated_res": attr.label_list(allow_files = True, doc = "Directories (tree artifacts) laid out like res/, e.g. images emitted by the JS bundler."),
+        "manifest": attr.label(allow_single_file = [".xml"], mandatory = True),
+        "manifest_placeholders": attr.string_dict(),
+        "min_sdk": attr.int(mandatory = True),
+        "package": attr.string(mandatory = True),
+        "react_packages": attr.string_list(doc = "Fully-qualified ReactPackage classes added to PackageList."),
+        "res": attr.label_list(allow_files = True),
+        "target_sdk": attr.int(mandatory = True),
+        "version_code": attr.int(mandatory = True),
+        "version_name": attr.string(mandatory = True),
+        "_gen_r": attr.label(default = "//react_native/android/tools:gen_r", executable = True, cfg = "exec"),
+        "_manifest_merger_classpath": attr.label(default = "@rn_android_tools_maven//:all", cfg = "exec"),
+    }),
+)
+
+def _android_apk_impl(ctx):
+    res_info = ctx.attr.resources[AndroidAppResourcesInfo]
+    runtime_jars = depset(transitive = [d[JavaInfo].transitive_runtime_jars for d in ctx.attr.deps if JavaInfo in d]).to_list()
+    infos = collect_android_infos(ctx.attr.deps)
+
+    dex = ctx.actions.declare_file(ctx.label.name + "/classes.dex.zip")
+    d8_args = ctx.actions.args()
+    d8_args.add("--debug" if ctx.attr.debug else "--release")
+
+    # Debug dexing keeps local-variable tables and reports every malformed one in third-party
+    # jars (kotlinx-coroutines has hundreds) at info level; they're harmless and drown real output.
+    d8_args.add_all(["--map-diagnostics", "info", "none"])
+    d8_args.add("--min-api", str(res_info.min_sdk))
+    d8_args.add("--lib", ctx.file._android_jar)
+    d8_args.add("--output", dex)
+    d8_args.add_all(runtime_jars)
+    _run_java(
+        ctx,
+        main_class = "com.android.tools.r8.D8",
+        classpath = ctx.files._d8_classpath,
+        jvm_flags = ["-Xmx4g"],
+        arguments = [d8_args],
+        inputs = runtime_jars + [ctx.file._android_jar],
+        outputs = [dex],
+        mnemonic = "AndroidDex",
+        progress_message = "Dexing %{label}",
+    )
+
+    native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
+    native_libs = [lib for lib in native_libs if lib.abi in ctx.attr.abis]
+    assets = depset(transitive = [i.assets for i in infos]).to_list()
+
+    unsigned = ctx.actions.declare_file(ctx.label.name + "/unsigned.apk")
+    apk_args = ctx.actions.args()
+    apk_args.use_param_file("@%s", use_always = True)
+    apk_args.set_param_file_format("multiline")
+    apk_args.add("--resources", res_info.resources_apk)
+    apk_args.add("--dex", dex)
+    for lib in native_libs:
+        apk_args.add("--native_lib", "%s/%s=%s" % (lib.abi, lib.file.basename, lib.file.path))
+    for asset in assets:
+        apk_args.add("--asset", "%s=%s" % (asset.path, asset.file.path))
+    for f in ctx.files.assets:
+        apk_args.add("--asset", "%s=%s" % (f.basename, f.path))
+    apk_args.add_all(runtime_jars, before_each = "--java_resources_from")
+    apk_args.add("--out", unsigned)
+    ctx.actions.run(
+        executable = ctx.executable._build_apk,
+        arguments = [apk_args],
+        inputs = depset(
+            [res_info.resources_apk, dex] + runtime_jars + ctx.files.assets +
+            [lib.file for lib in native_libs] + [a.file for a in assets],
+        ),
+        outputs = [unsigned],
+        mnemonic = "AndroidBuildApk",
+        progress_message = "Packaging %{label}",
+    )
+
+    # 16 KiB page alignment for .so files is required on Android 15+ devices with 16 KiB pages.
+    aligned = ctx.actions.declare_file(ctx.label.name + "/aligned.apk")
+    ctx.actions.run(
+        executable = ctx.file._zipalign,
+        arguments = ["-P", "16", "-f", "4", unsigned.path, aligned.path],
+        inputs = [unsigned] + ctx.files._zipalign_libs,
+        outputs = [aligned],
+        mnemonic = "AndroidZipalign",
+        progress_message = "Aligning %{label}",
+    )
+
+    apk = ctx.actions.declare_file(ctx.label.name + ".apk")
+    sign_args = ctx.actions.args()
+    sign_args.add("sign")
+    sign_args.add("--ks", ctx.file.keystore)
+    sign_args.add("--ks-pass", "pass:" + ctx.attr.keystore_password)
+    sign_args.add("--ks-key-alias", ctx.attr.key_alias)
+    sign_args.add("--min-sdk-version", str(res_info.min_sdk))
+    sign_args.add("--out", apk)
+    sign_args.add(aligned)
+    _run_java(
+        ctx,
+        main_class = "com.android.apksigner.ApkSignerTool",
+        classpath = ctx.files._apksigner_classpath,
+        arguments = [sign_args],
+        inputs = [aligned, ctx.file.keystore],
+        outputs = [apk],
+        mnemonic = "AndroidSignApk",
+        progress_message = "Signing %{label}",
+    )
+
+    return [DefaultInfo(files = depset([apk]))]
+
+android_apk = rule(
+    implementation = _android_apk_impl,
+    doc = "Dexes the app's runtime classpath and packages it with linked resources, native libraries and assets into a signed APK.",
+    attrs = dict(_SDK_ATTRS, **{
+        "abis": attr.string_list(mandatory = True),
+        "assets": attr.label_list(allow_files = True, doc = "Files placed at the root of assets/, e.g. index.android.bundle."),
+        "debug": attr.bool(default = False),
+        "deps": attr.label_list(providers = [[JavaInfo], [AndroidLibraryInfo]]),
+        "key_alias": attr.string(mandatory = True),
+        "keystore": attr.label(allow_single_file = True, mandatory = True),
+        "keystore_password": attr.string(mandatory = True),
+        "resources": attr.label(providers = [AndroidAppResourcesInfo], mandatory = True),
+        "_apksigner_classpath": attr.label(default = "@rn_android_sdk//:apksigner_jar", cfg = "exec"),
+        "_build_apk": attr.label(default = "//react_native/android/tools:build_apk", executable = True, cfg = "exec"),
+        "_d8_classpath": attr.label(default = "@rn_android_sdk//:d8_jar", cfg = "exec"),
+        "_zipalign": attr.label(default = "@rn_android_sdk//:zipalign", allow_single_file = True, cfg = "exec"),
+        "_zipalign_libs": attr.label(default = "@rn_android_sdk//:zipalign_libs", cfg = "exec"),
+    }),
+)
+
+_INSTALL_SCRIPT = """\
+#!/usr/bin/env bash
+# Installs and launches the app on the device adb selects (set ANDROID_SERIAL to choose one).
+set -euo pipefail
+"{adb}" install -r -d "{apk}"
+{reverse}"{adb}" shell monkey -p "{package}" -c android.intent.category.LAUNCHER 1 >/dev/null
+echo "Launched {package}"
+"""
+
+def _android_install_impl(ctx):
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(
+        script,
+        _INSTALL_SCRIPT.format(
+            adb = ctx.file._adb.short_path,
+            apk = ctx.file.apk.short_path,
+            package = ctx.attr.package,
+            # Debug builds load JS from Metro at localhost:8081 on the device.
+            reverse = '"{}" reverse tcp:{port} tcp:{port}\n'.format(ctx.file._adb.short_path, port = ctx.attr.metro_port) if ctx.attr.debug else "",
+        ),
+        is_executable = True,
+    )
+    return [DefaultInfo(
+        executable = script,
+        runfiles = ctx.runfiles(files = [ctx.file._adb, ctx.file.apk]),
+    )]
+
+android_install = rule(
+    implementation = _android_install_impl,
+    doc = "`bazel run` target that installs an APK with the hermetic adb and launches it.",
+    executable = True,
+    attrs = {
+        "apk": attr.label(allow_single_file = [".apk"], mandatory = True),
+        "debug": attr.bool(default = False),
+        "metro_port": attr.int(default = 8081),
+        "package": attr.string(mandatory = True),
+        "_adb": attr.label(default = "@rn_android_sdk//:adb", allow_single_file = True),
+    },
+)

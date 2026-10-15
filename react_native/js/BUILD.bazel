@@ -1,0 +1,21 @@
+load("@aspect_rules_js//js:defs.bzl", "js_binary")
+
+js_binary(
+    name = "bundler",
+    data = ["metro_config.cjs"],
+    entry_point = "bundle.cjs",
+    visibility = ["//visibility:public"],
+)
+
+js_binary(
+    name = "codegen",
+    entry_point = "codegen.cjs",
+    visibility = ["//visibility:public"],
+)
+
+js_binary(
+    name = "dev_server",
+    data = ["metro_config.cjs"],
+    entry_point = "dev_server.cjs",
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,5 @@
+exports_files([
+    "debug.keystore",
+    "maven_tools_lock.json",
+    "maven_tools_spec.json",
+])

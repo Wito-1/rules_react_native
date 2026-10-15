@@ -1,0 +1,8 @@
+# rules_react_native compiles the app's Java with rules_java. Use a downloaded JDK rather than
+# whatever (if anything) is installed on the host.
+common --java_runtime_version=remotejdk_21
+common --tool_java_runtime_version=remotejdk_21
+
+test --test_output=errors
+
+try-import %workspace%/user.bazelrc

@@ -1,0 +1,63 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@rules_react_native//react_native:defs.bzl", "react_native_android_app", "react_native_bundle", "react_native_dev_server")
+
+npm_link_all_packages(name = "node_modules")
+
+_JS_SRCS = [
+    "App.tsx",
+    "app.json",
+    "babel.config.js",
+    "index.js",
+    "package.json",
+]
+
+_JAVA_SRCS = [
+    "android/java/com/example/hello/MainActivity.java",
+    "android/java/com/example/hello/MainApplication.java",
+]
+
+_RES = [
+    "android/res/drawable/rn_edit_text_material.xml",
+    "android/res/values/strings.xml",
+    "android/res/values/styles.xml",
+]
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = _JS_SRCS,
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+react_native_bundle(
+    name = "bundle_ios",
+    srcs = _JS_SRCS,
+    node_modules = ":node_modules",
+    platform = "ios",
+)
+
+# Release: JS embedded as Hermes bytecode.
+react_native_android_app(
+    name = "hello",
+    srcs = _JAVA_SRCS,
+    bundle = ":bundle_android",
+    manifest = "android/AndroidManifest.xml",
+    package = "com.example.hello",
+    res = _RES,
+)
+
+# Debug: JS comes from `ibazel run :start`, with Fast Refresh and the dev menu.
+react_native_android_app(
+    name = "hello_debug",
+    srcs = _JAVA_SRCS,
+    debug = True,
+    manifest = "android/AndroidManifest.xml",
+    package = "com.example.hello",
+    res = _RES,
+)
+
+react_native_dev_server(
+    name = "start",
+    srcs = _JS_SRCS,
+    node_modules = ":node_modules",
+)

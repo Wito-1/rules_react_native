@@ -1,0 +1,14 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@rules_react_native//react_native:defs.bzl", "react_native_maven_pin")
+
+# Hosts the rules_js virtual store the apps' node_modules link into.
+npm_link_all_packages(name = "node_modules")
+
+# `bazel run //:pin` after changing a spec (e.g. bumping React Native).
+react_native_maven_pin(
+    name = "pin",
+    pins = {
+        "android/maven_debug_spec.json": "android/maven_debug_lock.json",
+        "android/maven_spec.json": "android/maven_lock.json",
+    },
+)

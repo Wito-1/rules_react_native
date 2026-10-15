@@ -1,0 +1,10 @@
+# OnLoad.cpp is react-native's ReactAndroid/cmake-utils/default-app-setup/OnLoad.cpp (v0.86.3,
+# MIT). autolinking.h is what @react-native/gradle-plugin generates; autolinking.cpp is generated
+# per app by react_native_appmodules from its codegen libraries.
+exports_files(
+    [
+        "OnLoad.cpp",
+        "autolinking.h",
+    ],
+    visibility = ["//visibility:public"],
+)

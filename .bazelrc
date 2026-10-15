@@ -1,0 +1,5 @@
+common --enable_bzlmod
+test --test_output=errors
+
+try-import %workspace%/user.bazelrc
+common --incompatible_default_to_explicit_init_py

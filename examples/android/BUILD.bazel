@@ -1,0 +1,4 @@
+exports_files([
+    "maven_debug_lock.json",
+    "maven_lock.json",
+])

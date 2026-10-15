@@ -1,0 +1,63 @@
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_python//python:py_library.bzl", "py_library")
+load("@rules_python//python:py_test.bzl", "py_test")
+
+# Resolves a Maven spec into a lockfile. Consumers run it through `react_native_maven_pin`; paths
+# are relative to the workspace `bazel run` is invoked from.
+py_binary(
+    name = "maven_resolve",
+    legacy_create_init = 0,
+    srcs = ["maven_resolve.py"],
+    visibility = ["//visibility:public"],
+)
+
+# Re-pins the ruleset's own host tools (AGP's manifest merger).
+py_binary(
+    name = "pin_tools",
+    legacy_create_init = 0,
+    srcs = ["maven_resolve.py"],
+    args = ["--pin=react_native/android/maven_tools_spec.json=react_native/android/maven_tools_lock.json"],
+    main = "maven_resolve.py",
+)
+
+py_library(
+    name = "gen_r_lib",
+    srcs = ["gen_r.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "gen_r",
+    legacy_create_init = 0,
+    srcs = ["gen_r.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "gen_r_test",
+    legacy_create_init = 0,
+    size = "small",
+    srcs = ["gen_r_test.py"],
+    deps = [":gen_r_lib"],
+)
+
+py_library(
+    name = "build_apk_lib",
+    srcs = ["build_apk.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "build_apk",
+    legacy_create_init = 0,
+    srcs = ["build_apk.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "build_apk_test",
+    legacy_create_init = 0,
+    size = "small",
+    srcs = ["build_apk_test.py"],
+    deps = [":build_apk_lib"],
+)

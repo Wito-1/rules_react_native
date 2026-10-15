@@ -1,0 +1,6 @@
+packages:
+  - "hello"
+  - "native_modules"
+
+# No dependency needs install scripts; rules_js requires the list to be explicit.
+onlyBuiltDependencies: []

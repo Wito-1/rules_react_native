@@ -1,0 +1,21 @@
+module(
+    name = "rules_react_native",
+    version = "0.1.0",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+bazel_dep(name = "aspect_rules_js", version = "3.1.1")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_java", version = "9.1.0")
+bazel_dep(name = "rules_python", version = "2.3.1")
+
+# The ruleset's own repositories: the Android SDK/NDK and the host tool jars. Consumers declare
+# their React Native artifact sets with `react_native.maven` tags (see extensions.bzl).
+react_native = use_extension("//react_native:extensions.bzl", "react_native")
+use_repo(react_native, "rn_android_ndk", "rn_android_sdk", "rn_android_tools_maven")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+python.toolchain(
+    is_default = True,
+    python_version = "3.12",
+)

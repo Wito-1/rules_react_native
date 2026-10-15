@@ -1,0 +1,7 @@
+{
+  "artifacts": [
+    "com.android.tools.build:manifest-merger:32.4.1"
+  ],
+  "build_type": "release",
+  "excludes": []
+}

@@ -1,0 +1,8 @@
+{
+  "artifacts": [
+    "com.facebook.react:react-android:0.86.3",
+    "com.facebook.hermes:hermes-android:250829098.0.17"
+  ],
+  "build_type": "debug",
+  "excludes": []
+}

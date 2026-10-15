@@ -1,0 +1,38 @@
+module(name = "rules_react_native_examples")
+
+bazel_dep(name = "rules_react_native")
+local_path_override(
+    module_name = "rules_react_native",
+    path = "..",
+)
+
+bazel_dep(name = "aspect_rules_js", version = "3.1.1")
+
+pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")
+pnpm.pnpm(pnpm_version = "10.33.4")
+use_repo(pnpm, "pnpm")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm",
+    data = [
+        "//:hello/package.json",
+        "//:native_modules/package.json",
+        "//:package.json",
+        "//:pnpm-workspace.yaml",
+    ],
+    pnpm_lock = "//:pnpm-lock.yaml",
+)
+use_repo(npm, "npm")
+
+# React Native 0.86.3's Android artifacts, pinned by //:pin from android/*_spec.json.
+react_native = use_extension("@rules_react_native//react_native:extensions.bzl", "react_native")
+react_native.maven(
+    name = "rn_maven",
+    lock_file = "//android:maven_lock.json",
+)
+react_native.maven(
+    name = "rn_maven_debug",
+    lock_file = "//android:maven_debug_lock.json",
+)
+use_repo(react_native, "rn_maven", "rn_maven_debug")
