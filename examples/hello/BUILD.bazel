@@ -1,3 +1,4 @@
+load("@aspect_rules_jest//jest:defs.bzl", "jest_test")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@rules_react_native//react_native:defs.bzl", "react_native_android_app", "react_native_apk_test", "react_native_bundle", "react_native_dev_server")
 
@@ -73,4 +74,18 @@ react_native_apk_test(
     name = "hello_debug_apk_test",
     apk = ":hello_debug",
     package = "com.example.hello",
+)
+
+# Component tests, next to the device-free APK tests: one `bazel test //...` covers both layers.
+jest_test(
+    name = "jest",
+    config = "jest.config.js",
+    data = [
+        "App.test.tsx",
+        "App.tsx",
+        "babel.config.js",
+        "package.json",
+        ":node_modules",
+    ],
+    node_modules = ":node_modules",
 )

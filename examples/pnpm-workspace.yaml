@@ -10,3 +10,11 @@ packages:
 
 # No dependency needs install scripts; rules_js requires the list to be explicit.
 onlyBuiltDependencies: []
+
+# @react-native/jest-preset requires react-native (and react) from its own location without
+# declaring them; declaring them as peers makes pnpm link the app's copies next to it.
+packageExtensions:
+  "@react-native/jest-preset":
+    peerDependencies:
+      react: "*"
+      react-native: "*"
