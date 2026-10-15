@@ -3,6 +3,9 @@
 common --java_runtime_version=remotejdk_21
 common --tool_java_runtime_version=remotejdk_21
 
+# Selects the staging variant of //variants (see variants/BUILD.bazel).
+common:staging --//variants:env=staging
+
 test --test_output=errors
 
 try-import %workspace%/user.bazelrc

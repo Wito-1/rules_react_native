@@ -1,0 +1,90 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_apk_test",
+    "react_native_bundle",
+)
+
+npm_link_all_packages(name = "node_modules")
+
+# bazel build //variants --//variants:env=staging   (or --config=staging, see examples/.bazelrc)
+string_flag(
+    name = "env",
+    build_setting_default = "production",
+    values = [
+        "production",
+        "staging",
+    ],
+)
+
+config_setting(
+    name = "staging",
+    flag_values = {":env": "staging"},
+)
+
+# The JS side of the variant: App.tsx imports ./env, which is one of env/*.ts.
+copy_file(
+    name = "env_ts",
+    src = select({
+        ":staging": "env/staging.ts",
+        "//conditions:default": "env/production.ts",
+    }),
+    out = "env.ts",
+    allow_symlink = True,
+)
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = [
+        "App.tsx",
+        "app.json",
+        "babel.config.js",
+        "index.js",
+        "package.json",
+        ":env_ts",
+    ],
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+# One target, two apps: staging installs next to production under its own id and label.
+react_native_android_app(
+    name = "variants",
+    srcs = [
+        "android/java/com/example/variants/MainActivity.java",
+        "android/java/com/example/variants/MainApplication.java",
+    ],
+    application_id = select({
+        ":staging": "com.example.variants.staging",
+        "//conditions:default": "com.example.variants",
+    }),
+    build_config_fields = select({
+        ":staging": {"API_URL": "https://staging.api.example.com"},
+        "//conditions:default": {"API_URL": "https://api.example.com"},
+    }),
+    bundle = ":bundle_android",
+    manifest = "android/AndroidManifest.xml",
+    manifest_placeholders = select({
+        ":staging": {"appLabel": "Variants (staging)"},
+        "//conditions:default": {"appLabel": "Variants"},
+    }),
+    package = "com.example.variants",
+    res = [
+        "android/res/drawable/rn_edit_text_material.xml",
+        "android/res/values/strings.xml",
+        "android/res/values/styles.xml",
+    ],
+)
+
+react_native_apk_test(
+    name = "variants_apk_test",
+    apk = ":variants",
+    assets = ["index.android.bundle"],
+    package = select({
+        ":staging": "com.example.variants.staging",
+        "//conditions:default": "com.example.variants",
+    }),
+)

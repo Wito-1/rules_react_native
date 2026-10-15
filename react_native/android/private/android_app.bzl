@@ -19,14 +19,14 @@ package {package};
 
 public final class BuildConfig {{
   public static final boolean DEBUG = {debug};
-  public static final String APPLICATION_ID = "{package}";
+  public static final String APPLICATION_ID = "{application_id}";
   public static final String BUILD_TYPE = "{build_type}";
   public static final int VERSION_CODE = {version_code};
   public static final String VERSION_NAME = "{version_name}";
   public static final boolean IS_NEW_ARCHITECTURE_ENABLED = true;
   public static final boolean IS_HERMES_ENABLED = true;
   public static final boolean IS_EDGE_TO_EDGE_ENABLED = {edge_to_edge};
-}}
+{fields}}}
 """
 
 # Mirrors GenerateEntryPointTask in @react-native/gradle-plugin; apps call loadReactNative() from
@@ -97,14 +97,28 @@ public class PackageList {{
 }}
 """
 
+def _application_id(ctx):
+    return ctx.attr.application_id or ctx.attr.package
+
 def _merge_manifests(ctx, libraries):
+    # Relative class names resolve against the namespace (`package`), before the manifest's
+    # package becomes the application id, as AGP does.
+    qualified = ctx.actions.declare_file(ctx.label.name + "/qualified/AndroidManifest.xml")
+    ctx.actions.run(
+        executable = ctx.executable._qualify_manifest,
+        arguments = ["--manifest", ctx.file.manifest.path, "--namespace", ctx.attr.package, "--out", qualified.path],
+        inputs = [ctx.file.manifest],
+        outputs = [qualified],
+        mnemonic = "AndroidQualifyManifest",
+        progress_message = "Qualifying the manifest of %{label}",
+    )
     merged = ctx.actions.declare_file(ctx.label.name + "/AndroidManifest.xml")
     args = ctx.actions.args()
-    args.add("--main", ctx.file.manifest)
+    args.add("--main", qualified)
     lib_manifests = [lib.manifest for lib in libraries]
     if lib_manifests:
         args.add_joined("--libs", lib_manifests, join_with = ":")
-    args.add("--property", "PACKAGE=" + ctx.attr.package)
+    args.add("--property", "PACKAGE=" + _application_id(ctx))
     args.add("--property", "MIN_SDK_VERSION=%d" % ctx.attr.min_sdk)
     args.add("--property", "TARGET_SDK_VERSION=%d" % ctx.attr.target_sdk)
     args.add("--property", "VERSION_CODE=%d" % ctx.attr.version_code)
@@ -119,7 +133,7 @@ def _merge_manifests(ctx, libraries):
         main_class = "com.android.manifmerger.Merger",
         classpath = ctx.files._manifest_merger_classpath,
         arguments = [args],
-        inputs = [ctx.file.manifest] + lib_manifests,
+        inputs = [qualified] + lib_manifests,
         outputs = [merged],
         mnemonic = "AndroidManifestMerger",
         progress_message = "Merging Android manifests of %{label}",
@@ -186,6 +200,11 @@ def _android_app_resources_impl(ctx):
     generated = {
         ctx.attr.package.replace(".", "/") + "/BuildConfig.java": _BUILD_CONFIG.format(
             package = ctx.attr.package,
+            application_id = _application_id(ctx),
+            fields = "".join([
+                "  public static final String %s = %s;\n" % (k, json.encode(v))
+                for k, v in sorted(ctx.attr.build_config_fields.items())
+            ]),
             debug = "true" if ctx.attr.debug else "false",
             build_type = "debug" if ctx.attr.debug else "release",
             version_code = ctx.attr.version_code,
@@ -242,6 +261,8 @@ android_app_resources = rule(
     implementation = _android_app_resources_impl,
     doc = "Merges manifests, links resources with aapt2 and writes a srcjar of R classes plus the React Native glue sources the Gradle plugin would generate.",
     attrs = dict(_SDK_ATTRS, **{
+        "application_id": attr.string(doc = "The installed app's id, if it differs from `package` (Gradle's `applicationId` vs `namespace`)."),
+        "build_config_fields": attr.string_dict(doc = "Extra `public static final String` fields of BuildConfig (Gradle's `buildConfigField`)."),
         "debug": attr.bool(default = False),
         "deps": attr.label_list(providers = [AndroidLibraryInfo]),
         "edge_to_edge": attr.bool(default = False),
@@ -256,6 +277,7 @@ android_app_resources = rule(
         "version_code": attr.int(mandatory = True),
         "version_name": attr.string(mandatory = True),
         "_gen_r": attr.label(default = "//react_native/android/tools:gen_r", executable = True, cfg = "exec"),
+        "_qualify_manifest": attr.label(default = "//react_native/android/tools:qualify_manifest", executable = True, cfg = "exec"),
         "_manifest_merger_classpath": attr.label(default = "@rn_android_tools_maven//:all", cfg = "exec"),
     }),
 )

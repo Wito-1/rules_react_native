@@ -27,6 +27,8 @@ def react_native_android_app(
         name,
         package,
         manifest,
+        application_id = None,
+        build_config_fields = {},
         bundle = None,
         maven = None,
         maven_debug = None,
@@ -61,7 +63,13 @@ def react_native_android_app(
 
     Args:
         name: Target name; the APK is `<name>.apk`.
-        package: Application id and Java package of BuildConfig/R, e.g. "com.example.hello".
+        package: Java package of BuildConfig and R, and the base for relative class names in the
+            manifest (Gradle's `namespace`), e.g. "com.example.hello". Also the application id
+            unless `application_id` is set.
+        application_id: The installed app's id when it differs from `package`, e.g. a staging
+            variant's "com.example.hello.staging" that installs next to the release.
+        build_config_fields: Extra `public static final String` fields of BuildConfig, like
+            Gradle's `buildConfigField`.
         manifest: The app's AndroidManifest.xml. It needs no `package` attribute.
         bundle: A `react_native_bundle` target for platform "android", embedded as
             assets/index.android.bundle. Required for release builds. Optional with `debug`, where
@@ -102,8 +110,8 @@ def react_native_android_app(
         javacopts: Extra javac flags for `srcs`.
         **kwargs: Common attributes (tags, visibility, ...) applied to every generated target.
     """
-    placeholders = {"usesCleartextTraffic": "true" if debug else "false"}
-    placeholders.update(manifest_placeholders)
+    # `|` rather than update() so `manifest_placeholders` can be a select().
+    placeholders = {"usesCleartextTraffic": "true" if debug else "false"} | manifest_placeholders
 
     if bundle == None and not debug:
         fail("react_native_android_app: release builds need a `bundle`")
@@ -126,6 +134,8 @@ def react_native_android_app(
     android_app_resources(
         name = name + "_resources",
         package = package,
+        application_id = application_id,
+        build_config_fields = build_config_fields,
         manifest = manifest,
         res = res,
         generated_res = generated_res,
@@ -174,7 +184,7 @@ def react_native_android_app(
         name = name + ".install",
         apk = name,
         debug = debug,
-        package = package,
+        package = application_id or package,
         **kwargs
     )
     android_sign(

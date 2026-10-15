@@ -69,6 +69,27 @@ py_binary(
     visibility = ["//visibility:public"],
 )
 
+py_library(
+    name = "qualify_manifest_lib",
+    srcs = ["qualify_manifest.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "qualify_manifest",
+    srcs = ["qualify_manifest.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "qualify_manifest_test",
+    size = "small",
+    srcs = ["qualify_manifest_test.py"],
+    legacy_create_init = 0,
+    deps = [":qualify_manifest_lib"],
+)
+
 py_binary(
     name = "own_r_txt",
     srcs = ["own_r_txt.py"],

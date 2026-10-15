@@ -7,6 +7,7 @@ local_path_override(
 )
 
 bazel_dep(name = "aspect_rules_js", version = "3.1.1")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
 
 pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")
 pnpm.pnpm(pnpm_version = "10.33.4")
@@ -18,10 +19,12 @@ npm.npm_translate_lock(
     data = [
         "//:hello/package.json",
         "//:assets/package.json",
+        "//:brownfield/package.json",
         "//:fleet/driver/package.json",
         "//:fleet/operator/package.json",
         "//:fleet/shared/package.json",
         "//:native_modules/package.json",
+        "//:variants/package.json",
         "//:package.json",
         "//:pnpm-workspace.yaml",
     ],

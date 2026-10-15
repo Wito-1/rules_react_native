@@ -1,0 +1,47 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_apk_test",
+    "react_native_bundle",
+)
+
+npm_link_all_packages(name = "node_modules")
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = [
+        "App.tsx",
+        "app.json",
+        "babel.config.js",
+        "index.js",
+        "package.json",
+    ],
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+# A native app (NativeHomeActivity is the launcher) with one React Native screen.
+react_native_android_app(
+    name = "brownfield",
+    srcs = [
+        "android/java/com/example/brownfield/MainApplication.java",
+        "android/java/com/example/brownfield/NativeHomeActivity.java",
+        "android/java/com/example/brownfield/ProfileActivity.java",
+    ],
+    bundle = ":bundle_android",
+    manifest = "android/AndroidManifest.xml",
+    package = "com.example.brownfield",
+    res = [
+        "android/res/drawable/rn_edit_text_material.xml",
+        "android/res/values/strings.xml",
+        "android/res/values/styles.xml",
+    ],
+)
+
+react_native_apk_test(
+    name = "brownfield_apk_test",
+    apk = ":brownfield",
+    assets = ["index.android.bundle"],
+    package = "com.example.brownfield",
+)

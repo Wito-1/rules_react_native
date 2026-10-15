@@ -1,7 +1,9 @@
 packages:
   - "hello"
   - "native_modules"
+  - "variants"
   - "assets"
+  - "brownfield"
   - "fleet/driver"
   - "fleet/operator"
   - "fleet/shared"
