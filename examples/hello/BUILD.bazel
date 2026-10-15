@@ -1,5 +1,5 @@
 load("@npm//:defs.bzl", "npm_link_all_packages")
-load("@rules_react_native//react_native:defs.bzl", "react_native_android_app", "react_native_bundle", "react_native_dev_server")
+load("@rules_react_native//react_native:defs.bzl", "react_native_android_app", "react_native_apk_test", "react_native_bundle", "react_native_dev_server")
 
 npm_link_all_packages(name = "node_modules")
 
@@ -60,4 +60,17 @@ react_native_dev_server(
     name = "start",
     srcs = _JS_SRCS,
     node_modules = ":node_modules",
+)
+
+react_native_apk_test(
+    name = "hello_apk_test",
+    apk = ":hello",
+    assets = ["index.android.bundle"],
+    package = "com.example.hello",
+)
+
+react_native_apk_test(
+    name = "hello_debug_apk_test",
+    apk = ":hello_debug",
+    package = "com.example.hello",
 )

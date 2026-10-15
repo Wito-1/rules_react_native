@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check MODULE.bazel's version matches the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          grep -q "version = \"${version}\"" MODULE.bazel || {
+            echo "MODULE.bazel does not declare version ${version}"; exit 1; }
+
+      # The archive layout .bcr/source.template.json expects: rules_react_native-<version>/...
+      - name: Archive
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="rules_react_native-${GITHUB_REF_NAME}.tar.gz"
+          git archive --format=tar.gz --prefix="rules_react_native-${version}/" -o "${archive}" "${GITHUB_REF_NAME}"
+          echo "integrity: sha256-$(openssl dgst -sha256 -binary "${archive}" | base64)" >> notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "rules_react_native-${GITHUB_REF_NAME}.tar.gz" \
+            --title "${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag

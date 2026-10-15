@@ -1,0 +1,18 @@
+matrix:
+  platform:
+    - ubuntu2204
+    - macos_arm64
+  bazel:
+    - 8.x
+    - 9.x
+tasks:
+  verify_targets:
+    name: Verify the module's tools and tests
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@rules_react_native//react_native:defs"
+      - "@rules_react_native//react_native:extensions"
+      - "@rules_react_native//react_native/android/tools:all"
+    test_targets:
+      - "@rules_react_native//react_native/android/tools:all"

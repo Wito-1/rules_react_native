@@ -1,5 +1,12 @@
 load("@npm//:defs.bzl", "npm_link_all_packages")
-load("@rules_react_native//react_native:defs.bzl", "react_native_android_app", "react_native_bundle", "react_native_codegen", "react_native_dev_server")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_apk_test",
+    "react_native_bundle",
+    "react_native_codegen",
+    "react_native_dev_server",
+)
 
 npm_link_all_packages(name = "node_modules")
 
@@ -14,11 +21,8 @@ _JS_SRCS = [
 ]
 
 _JAVA_SRCS = [
-    "android/java/com/example/nativemodules/AppSpecsPackage.java",
-    "android/java/com/example/nativemodules/GreetingViewManager.java",
     "android/java/com/example/nativemodules/MainActivity.java",
     "android/java/com/example/nativemodules/MainApplication.java",
-    "android/java/com/example/nativemodules/NativeLocalStorageModule.java",
 ]
 
 _RES = [
@@ -27,6 +31,7 @@ _RES = [
     "android/res/values/styles.xml",
 ]
 
+# Java/C++ glue for the specs; compiled by //native_modules/greeting, which implements them.
 react_native_codegen(
     name = "codegen",
     srcs = [
@@ -34,10 +39,11 @@ react_native_codegen(
         "specs/GreetingViewNativeComponent.ts",
         "specs/NativeLocalStorage.ts",
     ],
-    java_package = "com.example.nativemodules.specs",
+    java_package = "com.example.greeting.specs",
     js_srcs_dir = "specs",
     library_name = "AppSpecs",
     node_modules = ":node_modules",
+    visibility = ["//native_modules/greeting:__pkg__"],
 )
 
 react_native_bundle(
@@ -51,26 +57,41 @@ react_native_android_app(
     name = "native_modules",
     srcs = _JAVA_SRCS,
     bundle = ":bundle_android",
-    codegen = [":codegen"],
     manifest = "android/AndroidManifest.xml",
     package = "com.example.nativemodules",
-    react_packages = ["com.example.nativemodules.AppSpecsPackage"],
     res = _RES,
+    deps = ["//native_modules/greeting"],
 )
 
 react_native_android_app(
     name = "native_modules_debug",
     srcs = _JAVA_SRCS,
-    codegen = [":codegen"],
     debug = True,
     manifest = "android/AndroidManifest.xml",
     package = "com.example.nativemodules",
-    react_packages = ["com.example.nativemodules.AppSpecsPackage"],
     res = _RES,
+    deps = ["//native_modules/greeting"],
 )
 
 react_native_dev_server(
     name = "start",
     srcs = _JS_SRCS,
     node_modules = ":node_modules",
+)
+
+react_native_apk_test(
+    name = "native_modules_apk_test",
+    apk = ":native_modules",
+    assets = [
+        "index.android.bundle",
+        "greeting.txt",
+    ],
+    package = "com.example.nativemodules",
+)
+
+react_native_apk_test(
+    name = "native_modules_debug_apk_test",
+    apk = ":native_modules_debug",
+    assets = ["greeting.txt"],
+    package = "com.example.nativemodules",
 )

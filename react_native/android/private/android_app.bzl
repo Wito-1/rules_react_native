@@ -2,7 +2,8 @@
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos")
+load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "compile_resources")
+load(":java.bzl", "JAVA_ATTRS", "run_java_tool")
 
 AndroidAppResourcesInfo = provider(
     doc = "Linked resources of an app, consumed by `android_apk`.",
@@ -96,20 +97,6 @@ public class PackageList {{
 }}
 """
 
-def _run_java(ctx, main_class, classpath, arguments, inputs, jvm_flags = [], **kwargs):
-    runtime = ctx.attr._java_runtime[java_common.JavaRuntimeInfo]
-    jvm_args = ctx.actions.args()
-    jvm_args.add_all(jvm_flags)
-    jvm_args.add_joined("-cp", classpath, join_with = ":")
-    jvm_args.add(main_class)
-    ctx.actions.run(
-        executable = runtime.java_executable_exec_path,
-        arguments = [jvm_args] + arguments,
-        inputs = depset(classpath + inputs),
-        tools = runtime.files,
-        **kwargs
-    )
-
 def _merge_manifests(ctx, libraries):
     merged = ctx.actions.declare_file(ctx.label.name + "/AndroidManifest.xml")
     args = ctx.actions.args()
@@ -127,7 +114,7 @@ def _merge_manifests(ctx, libraries):
     for k, v in sorted(ctx.attr.manifest_placeholders.items()):
         args.add("--placeholder", "%s=%s" % (k, v))
     args.add("--out", merged)
-    _run_java(
+    run_java_tool(
         ctx,
         main_class = "com.android.manifmerger.Merger",
         classpath = ctx.files._manifest_merger_classpath,
@@ -140,18 +127,7 @@ def _merge_manifests(ctx, libraries):
     return merged
 
 def _compile_res_dir(ctx, name, res_dir, inputs):
-    flata = ctx.actions.declare_file(ctx.label.name + "/" + name + ".flata")
-    args = ctx.actions.args()
-    args.add_all(["compile", "--legacy", "--dir", res_dir, "-o", flata])
-    ctx.actions.run(
-        executable = ctx.file._aapt2,
-        arguments = [args],
-        inputs = inputs,
-        outputs = [flata],
-        mnemonic = "Aapt2Compile",
-        progress_message = "Compiling Android resources of %{label}",
-    )
-    return flata
+    return compile_resources(ctx, ctx.file._aapt2, ctx.label.name + "/" + name, res_dir, inputs)
 
 def _res_root(files):
     root = None
@@ -164,6 +140,12 @@ def _res_root(files):
             fail("all `res` files must share one res/ directory, got %s and %s" % (root, candidate))
         root = candidate
     return root
+
+def _react_packages(ctx, infos):
+    packages = {p: True for p in ctx.attr.react_packages}
+    for p in depset(transitive = [i.react_packages for i in infos]).to_list():
+        packages[p] = True
+    return packages.keys()
 
 def _android_app_resources_impl(ctx):
     infos = collect_android_infos(ctx.attr.deps)
@@ -212,7 +194,7 @@ def _android_app_resources_impl(ctx):
         ),
         "com/facebook/react/ReactNativeApplicationEntryPoint.java": _ENTRY_POINT.format(package = ctx.attr.package),
         "com/facebook/react/PackageList.java": _PACKAGE_LIST.format(
-            extra = "".join([",\n      new %s()" % p for p in ctx.attr.react_packages]),
+            extra = "".join([",\n      new %s()" % p for p in _react_packages(ctx, infos)]),
         ),
     }
     srcjar = ctx.actions.declare_file(ctx.label.name + "/generated.srcjar")
@@ -252,12 +234,9 @@ def _android_app_resources_impl(ctx):
         ),
     ]
 
-_SDK_ATTRS = {
-    # The SDK's Java tools and AGP's manifest merger need a newer JVM than the default exec runtime.
-    "_java_runtime": attr.label(default = "@rules_java//toolchains:remotejdk_21", cfg = "exec", providers = [java_common.JavaRuntimeInfo]),
+_SDK_ATTRS = dict(JAVA_ATTRS, **{
     "_aapt2": attr.label(default = "@rn_android_sdk//:aapt2", allow_single_file = True, cfg = "exec"),
-    "_android_jar": attr.label(default = "@rn_android_sdk//:android_jar_file", allow_single_file = True),
-}
+})
 
 android_app_resources = rule(
     implementation = _android_app_resources_impl,
@@ -271,7 +250,7 @@ android_app_resources = rule(
         "manifest_placeholders": attr.string_dict(),
         "min_sdk": attr.int(mandatory = True),
         "package": attr.string(mandatory = True),
-        "react_packages": attr.string_list(doc = "Fully-qualified ReactPackage classes added to PackageList."),
+        "react_packages": attr.string_list(doc = "Fully-qualified ReactPackage classes added to PackageList, besides those the deps declare."),
         "res": attr.label_list(allow_files = True),
         "target_sdk": attr.int(mandatory = True),
         "version_code": attr.int(mandatory = True),
@@ -283,8 +262,12 @@ android_app_resources = rule(
 
 def _android_apk_impl(ctx):
     res_info = ctx.attr.resources[AndroidAppResourcesInfo]
-    runtime_jars = depset(transitive = [d[JavaInfo].transitive_runtime_jars for d in ctx.attr.deps if JavaInfo in d]).to_list()
     infos = collect_android_infos(ctx.attr.deps)
+    runtime_jars = depset(transitive = [i.runtime_jars for i in infos] + [
+        d[JavaInfo].transitive_runtime_jars
+        for d in ctx.attr.deps
+        if AndroidLibraryInfo not in d and JavaInfo in d
+    ]).to_list()
 
     dex = ctx.actions.declare_file(ctx.label.name + "/classes.dex.zip")
     d8_args = ctx.actions.args()
@@ -297,7 +280,7 @@ def _android_apk_impl(ctx):
     d8_args.add("--lib", ctx.file._android_jar)
     d8_args.add("--output", dex)
     d8_args.add_all(runtime_jars)
-    _run_java(
+    run_java_tool(
         ctx,
         main_class = "com.android.tools.r8.D8",
         classpath = ctx.files._d8_classpath,
@@ -359,7 +342,7 @@ def _android_apk_impl(ctx):
     sign_args.add("--min-sdk-version", str(res_info.min_sdk))
     sign_args.add("--out", apk)
     sign_args.add(aligned)
-    _run_java(
+    run_java_tool(
         ctx,
         main_class = "com.android.apksigner.ApkSignerTool",
         classpath = ctx.files._apksigner_classpath,
@@ -370,7 +353,19 @@ def _android_apk_impl(ctx):
         progress_message = "Signing %{label}",
     )
 
-    return [DefaultInfo(files = depset([apk]))]
+    return [
+        DefaultInfo(files = depset([apk])),
+        AndroidApkInfo(unsigned = aligned, min_sdk = res_info.min_sdk),
+        OutputGroupInfo(unsigned = depset([aligned])),
+    ]
+
+AndroidApkInfo = provider(
+    doc = "An APK before signing, for signing outside the build (`android_sign`).",
+    fields = {
+        "unsigned": "File: the zipaligned, unsigned APK",
+        "min_sdk": "int",
+    },
+)
 
 android_apk = rule(
     implementation = _android_apk_impl,
@@ -382,7 +377,7 @@ android_apk = rule(
         "deps": attr.label_list(providers = [[JavaInfo], [AndroidLibraryInfo]]),
         "key_alias": attr.string(mandatory = True),
         "keystore": attr.label(allow_single_file = True, mandatory = True),
-        "keystore_password": attr.string(mandatory = True),
+        "keystore_password": attr.string(mandatory = True, doc = "Stored in the action command line; only for keys that aren't secret. See `android_sign` for release keys."),
         "resources": attr.label(providers = [AndroidAppResourcesInfo], mandatory = True),
         "_apksigner_classpath": attr.label(default = "@rn_android_sdk//:apksigner_jar", cfg = "exec"),
         "_build_apk": attr.label(default = "//react_native/android/tools:build_apk", executable = True, cfg = "exec"),
@@ -429,5 +424,57 @@ android_install = rule(
         "metro_port": attr.int(default = 8081),
         "package": attr.string(mandatory = True),
         "_adb": attr.label(default = "@rn_android_sdk//:adb", allow_single_file = True),
+    },
+)
+
+def _rlocation(workspace_name, short_path):
+    if short_path.startswith("../"):
+        return short_path[len("../"):]
+    return workspace_name + "/" + short_path
+
+_SIGN_SCRIPT = """\
+#!/usr/bin/env bash
+# Signs {name}'s APK with a key that stays out of Bazel. Arguments go to `apksigner sign`, e.g.
+#   bazel run {label} -- --ks release.jks --ks-key-alias upload --ks-pass env:KS_PASS --out app.apk
+set -euo pipefail
+runfiles="$(cd "${{RUNFILES_DIR:-$0.runfiles}}" && pwd)"
+cd "${{BUILD_WORKING_DIRECTORY:-$PWD}}"
+out=()
+case " $* " in
+  *" --out "*) ;;
+  *) out=(--out "{default_out}"); echo "Writing {default_out} in $PWD" ;;
+esac
+"$runfiles/{java}" -cp "$runfiles/{apksigner}" com.android.apksigner.ApkSignerTool sign \\
+  --min-sdk-version {min_sdk} "${{out[@]}}" "$@" "$runfiles/{unsigned}"
+"""
+
+def _android_sign_impl(ctx):
+    info = ctx.attr.apk[AndroidApkInfo]
+    runtime = ctx.attr._jdk[java_common.JavaRuntimeInfo]
+    default_out = ctx.attr.apk.label.name + "-signed.apk"
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(script, _SIGN_SCRIPT.format(
+        name = ctx.attr.apk.label.name,
+        label = str(ctx.label),
+        default_out = default_out,
+        java = _rlocation(ctx.workspace_name, runtime.java_executable_runfiles_path),
+        apksigner = _rlocation(ctx.workspace_name, ctx.file._apksigner.short_path),
+        unsigned = _rlocation(ctx.workspace_name, info.unsigned.short_path),
+        min_sdk = info.min_sdk,
+    ), is_executable = True)
+    runfiles = ctx.runfiles(files = [ctx.file._apksigner, info.unsigned], transitive_files = runtime.files)
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+android_sign = rule(
+    implementation = _android_sign_impl,
+    doc = """`bazel run` target that signs an app's aligned, unsigned APK with a key passed at run time.
+
+The keystore and its password never become action inputs, so they can't leak into the action
+cache, a remote cache or build logs. Use apksigner's `env:` or `file:` password forms.""",
+    executable = True,
+    attrs = {
+        "apk": attr.label(providers = [AndroidApkInfo], mandatory = True),
+        "_apksigner": attr.label(default = "@rn_android_sdk//:apksigner_jar", allow_single_file = True),
+        "_jdk": attr.label(default = "@rules_java//toolchains:remotejdk_21", providers = [java_common.JavaRuntimeInfo]),
     },
 )

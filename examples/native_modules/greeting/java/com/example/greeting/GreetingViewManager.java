@@ -1,4 +1,4 @@
-package com.example.nativemodules;
+package com.example.greeting;
 
 import android.view.Gravity;
 import android.widget.TextView;
@@ -41,7 +41,8 @@ public class GreetingViewManager extends SimpleViewManager<TextView>
     TextView view = new TextView(context);
     view.setGravity(Gravity.CENTER);
     view.setTextSize(20);
-    view.setBackgroundColor(0xFFE8F0FE);
+    // Read through the library's own R class, which the app regenerates with final ids.
+    view.setBackgroundColor(context.getColor(R.color.greeting_background));
     view.setOnClickListener(
         v -> {
           EventDispatcher dispatcher =

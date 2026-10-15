@@ -1,7 +1,7 @@
 """Compiles the app's libappmodules.so, which registers React Native's TurboModule providers."""
 
 load("//react_native/js/private:codegen.bzl", "ReactNativeCodegenInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos")
+load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "merge_android_infos")
 
 _ABI_TARGETS = {
     "arm64-v8a": "aarch64-linux-android",
@@ -95,7 +95,11 @@ def _react_native_appmodules_impl(ctx):
     native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
     headers = depset(transitive = [i.cc_headers for i in infos])
     include_dirs = depset(transitive = [i.cc_include_dirs for i in infos]).to_list()
-    codegen = [c[ReactNativeCodegenInfo] for c in ctx.attr.codegen]
+    # The app's own codegen plus every library's; one entry per library name (diamonds).
+    codegen = {}
+    for c in [c[ReactNativeCodegenInfo] for c in ctx.attr.codegen] + depset(transitive = [i.codegen for i in infos]).to_list():
+        codegen.setdefault(c.library_name, c)
+    codegen = codegen.values()
     srcs = [f for f in ctx.files.srcs if f.extension in ("c", "cc", "cpp")]
     srcs.append(_autolinking_cpp(ctx, [c.library_name for c in codegen]))
     hdrs = [f for f in ctx.files.srcs if f.extension in ("h", "hpp")]
@@ -158,13 +162,7 @@ def _react_native_appmodules_impl(ctx):
 
     return [
         DefaultInfo(files = depset([o.file for o in outputs])),
-        AndroidLibraryInfo(
-            resources = depset(order = "postorder"),
-            native_libs = depset(outputs),
-            assets = depset(),
-            cc_headers = depset(),
-            cc_include_dirs = depset(),
-        ),
+        merge_android_infos(native_libs = outputs),
     ]
 
 react_native_appmodules = rule(

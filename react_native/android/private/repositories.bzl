@@ -88,13 +88,30 @@ android_sdk_repository = repository_rule(
 _SDK_ALIAS_BUILD = """\
 package(default_visibility = ["//visibility:public"])
 
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+# The macOS SDK/NDK binaries are universal or run under Rosetta, so any Mac CPU works.
+config_setting(
+    name = "macos",
+    constraint_values = ["@platforms//os:macos"],
+)
+
 [
     alias(
         name = name,
-        actual = select({{
-            "@platforms//os:linux": "@{linux}//:" + name,
-            "@platforms//os:macos": "@{macos}//:" + name,
-        }}),
+        actual = select(
+            {{
+                ":linux_x86_64": "@{linux}//:" + name,
+                ":macos": "@{macos}//:" + name,
+            }},
+            no_match_error = "rules_react_native: Google publishes the Android SDK/NDK tools only for linux-x86_64 and macOS hosts; no build of `" + name + "` exists for this execution platform.",
+        ),
     )
     for name in {names}
 ]
@@ -144,6 +161,9 @@ def _android_maven_repository_impl(rctx):
         attrs = {
             "coordinate": repr(entry["coordinate"]),
             "deps": repr([":" + d for d in entry["deps"]]),
+            # Lockfiles from before the API split carried no api_deps; treating everything as API
+            # matches what they built with.
+            "exports": repr([":" + d for d in entry.get("api_deps", entry["deps"])]),
         }
         packaging = entry.get("packaging")
         if packaging == "aar":
@@ -178,11 +198,10 @@ def _android_maven_repository_impl(rctx):
         ))
     build.append("alias(\n    name = \"all\",\n    actual = \":_all\",\n)\n")
 
-    # Every artifact is a direct dep so the whole pinned set is on the app's compile classpath,
-    # as Gradle's `api` closure of react-android would make it.
-    build.append("android_maven_import(\n    name = \"_all\",\n    coordinate = \"all\",\n    deps = {},\n)\n".format(
-        repr([":" + name for name in sorted(lock["artifacts"])]),
-    ))
+    # The roots and their API closure form the app's compile classpath, as Gradle's
+    # `implementation(react-android)` would; everything else is runtime-only.
+    roots = repr([":" + r for r in lock["roots"]])
+    build.append("android_maven_import(\n    name = \"_all\",\n    coordinate = \"all\",\n    deps = {0},\n    exports = {0},\n)\n".format(roots))
     rctx.file("BUILD.bazel", "\n".join(build))
 
 android_maven_repository = repository_rule(
@@ -264,5 +283,65 @@ android_ndk_repository = repository_rule(
         "sha256": attr.string(mandatory = True),
         "strip_prefix": attr.string(mandatory = True),
         "url": attr.string(mandatory = True),
+    },
+)
+
+def _default_maven_repository_impl(rctx):
+    if rctx.attr.actual:
+        rctx.file("BUILD.bazel", """\
+package(default_visibility = ["//visibility:public"])
+
+alias(
+    name = "all",
+    actual = "@{}//:all",
+)
+""".format(rctx.attr.actual))
+    else:
+        # Fails only if something actually uses the default, so release-only consumers can skip
+        # the debug lockfile.
+        rctx.file("BUILD.bazel", "fail({})\n".format(repr(rctx.attr.missing_message)))
+
+default_maven_repository = repository_rule(
+    implementation = _default_maven_repository_impl,
+    doc = "Points the rules' default Maven set at the consumer's `react_native.maven` repository.",
+    attrs = {
+        "actual": attr.string(doc = "Repository name of the consumer's hub, or empty if none was declared."),
+        "missing_message": attr.string(mandatory = True),
+    },
+)
+
+_PROFILE_BZL = """\
+\"\"\"React Native toolchain profile chosen by the react_native extension. Generated.\"\"\"
+
+REACT_NATIVE_VERSION = {version}
+COMPILE_SDK = {compile_sdk}
+APPMODULES_COPTS = {copts}
+"""
+
+def _profile_repository_impl(rctx):
+    rctx.file("BUILD.bazel", """\
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+exports_files(["profile.bzl"], visibility = ["//visibility:public"])
+
+bzl_library(
+    name = "profile",
+    srcs = ["profile.bzl"],
+    visibility = ["//visibility:public"],
+)
+""")
+    rctx.file("profile.bzl", _PROFILE_BZL.format(
+        version = repr(rctx.attr.react_native_version),
+        compile_sdk = rctx.attr.compile_sdk,
+        copts = repr(rctx.attr.appmodules_copts),
+    ))
+
+profile_repository = repository_rule(
+    implementation = _profile_repository_impl,
+    doc = "Exposes the selected React Native profile to the rules' macros as constants.",
+    attrs = {
+        "appmodules_copts": attr.string_list(),
+        "compile_sdk": attr.int(mandatory = True),
+        "react_native_version": attr.string(mandatory = True),
     },
 )

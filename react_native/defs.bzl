@@ -1,35 +1,42 @@
 """Public API of the React Native ruleset. See README.md."""
 
-load("@rules_java//java:java_library.bzl", "java_library")
-load("//react_native/android/private:android_app.bzl", "android_apk", "android_app_resources", "android_install")
+load("@rn_profile//:profile.bzl", "APPMODULES_COPTS", "COMPILE_SDK")
+load("//react_native/android/private:android_app.bzl", "android_apk", "android_app_resources", "android_install", "android_sign")
+load("//react_native/android/private:apk_test.bzl", _react_native_apk_test = "react_native_apk_test")
 load("//react_native/android/private:appmodules.bzl", "react_native_appmodules")
+load("//react_native/android/private:java.bzl", _react_native_java_library = "react_native_java_library")
+load("//react_native/android/private:library.bzl", _react_native_android_library = "react_native_android_library")
 load("//react_native/android/private:pin.bzl", _react_native_maven_pin = "react_native_maven_pin")
-load("//react_native/android/private:versions.bzl", "COMPILE_SDK")
 load("//react_native/js/private:bundle.bzl", _react_native_bundle = "react_native_bundle")
 load("//react_native/js/private:codegen.bzl", _react_native_codegen = "react_native_codegen")
 load("//react_native/js/private:dev_server.bzl", _react_native_dev_server = "react_native_dev_server")
 
+react_native_android_library = _react_native_android_library
+react_native_apk_test = _react_native_apk_test
 react_native_bundle = _react_native_bundle
 react_native_codegen = _react_native_codegen
 react_native_dev_server = _react_native_dev_server
+react_native_java_library = _react_native_java_library
 react_native_maven_pin = _react_native_maven_pin
 
-_ANDROID_JAR = Label("@rn_android_sdk//:android_jar")
+# Aliases the extension points at the consumer's release/debug `react_native.maven` sets.
+_DEFAULT_MAVEN = Label("@rn_maven_default//:all")
+_DEFAULT_MAVEN_DEBUG = Label("@rn_maven_default_debug//:all")
 
 def react_native_android_app(
         name,
         package,
         manifest,
         bundle = None,
-        maven = "@rn_maven//:all",
-        maven_debug = "@rn_maven_debug//:all",
+        maven = None,
+        maven_debug = None,
         srcs = [],
         res = [],
         deps = [],
         codegen = [],
         react_packages = [],
         min_sdk = 24,
-        target_sdk = COMPILE_SDK,
+        target_sdk = None,
         version_code = 1,
         version_name = "1.0",
         abis = ["arm64-v8a", "x86_64"],
@@ -43,7 +50,8 @@ def react_native_android_app(
         **kwargs):
     """Builds a signed React Native APK `<name>.apk` from Java sources and a `react_native_bundle`.
 
-    Also defines `<name>.install`, which `bazel run` uses to install and launch the APK on a device.
+    Also defines `<name>.install` (`bazel run` installs and launches the APK on a device) and
+    `<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`).
 
     The React Native runtime (react-android, Hermes) comes prebuilt from Maven; the only native
     code built is the app's small libappmodules.so (React Native's default OnLoad.cpp). The sources
@@ -59,17 +67,19 @@ def react_native_android_app(
             the app loads JS from Metro (`react_native_dev_server`) and an embedded bundle is only
             the fallback when Metro isn't reachable.
         maven: The release Maven artifact set, a `react_native.maven` repository's `:all` target.
-            Resolved in the calling package, so the default needs `use_repo(react_native, "rn_maven")`.
-        maven_debug: The same set with react-android/hermes-android's debug variants, used when
-            `debug = True`.
+            Defaults to the set whose lockfile has `"build_type": "release"`.
+        maven_debug: The set with react-android/hermes-android's debug variants, used when
+            `debug = True`. Defaults to the lockfile with `"build_type": "debug"`.
         srcs: Java sources, typically MainApplication and MainActivity.
         res: Files under one `res/` directory.
-        deps: Extra Java or Android library deps.
+        deps: `react_native_android_library`, `react_native_java_library`, Maven artifacts
+            (`@rn_maven//:<group>_<artifact>`) or plain `java_library` targets.
         codegen: `react_native_codegen` targets. Their Java specs are compiled with `srcs`, their
             C++ is linked into libappmodules.so and registered in the generated autolinking.cpp.
-        react_packages: Fully-qualified ReactPackage classes to register in PackageList (manual autolinking).
+        react_packages: Fully-qualified ReactPackage classes to register in PackageList, besides
+            those `deps` declare.
         min_sdk: minSdkVersion.
-        target_sdk: targetSdkVersion.
+        target_sdk: targetSdkVersion. Defaults to the React Native profile's compileSdk.
         version_code: versionCode.
         version_name: versionName.
         abis: ABIs whose native libraries are packaged.
@@ -80,8 +90,11 @@ def react_native_android_app(
         edge_to_edge: Sets BuildConfig.IS_EDGE_TO_EDGE_ENABLED.
         manifest_placeholders: Extra `${...}` substitutions for the manifest merger. `applicationId`
             and `usesCleartextTraffic` (true in debug) are always set.
-        keystore: Signing keystore. Defaults to a public debug key; never ship that to a store.
-        keystore_password: Password of `keystore` and of its key.
+        keystore: Keystore for the in-build signature. Defaults to a public debug key; never ship
+            that to a store. Sign release builds with `<name>.sign` instead, so the key and its
+            password stay out of the build.
+        keystore_password: Password of `keystore` and of its key. It's an action argument, so only
+            for keys that aren't secret.
         key_alias: Alias of the signing key in `keystore`.
         javacopts: Extra javac flags for `srcs`.
         **kwargs: Common attributes (tags, visibility, ...) applied to every generated target.
@@ -91,14 +104,19 @@ def react_native_android_app(
 
     if bundle == None and not debug:
         fail("react_native_android_app: release builds need a `bundle`")
-    rn_maven = maven_debug if debug else maven
+    if debug:
+        rn_maven = maven_debug or _DEFAULT_MAVEN_DEBUG
+    else:
+        rn_maven = maven or _DEFAULT_MAVEN
+    if target_sdk == None:
+        target_sdk = COMPILE_SDK
 
     generated_res = []
     if bundle:
         native.filegroup(
             name = name + "_bundle_res",
             srcs = [bundle],
-            output_group = "res",
+            output_group = "assets",
             **kwargs
         )
         generated_res = [name + "_bundle_res"]
@@ -119,10 +137,10 @@ def react_native_android_app(
         manifest_placeholders = placeholders,
         **kwargs
     )
-    java_library(
+    _react_native_java_library(
         name = name + "_lib",
         srcs = srcs + [name + "_resources"] + codegen,
-        deps = deps + [rn_maven, _ANDROID_JAR],
+        deps = deps + [rn_maven],
         javacopts = javacopts,
         **kwargs
     )
@@ -130,6 +148,7 @@ def react_native_android_app(
         name = name + "_appmodules",
         abis = abis,
         codegen = codegen,
+        copts = APPMODULES_COPTS,
         debug = debug,
         min_sdk = min_sdk,
         deps = deps + [rn_maven],
@@ -152,5 +171,10 @@ def react_native_android_app(
         apk = name,
         debug = debug,
         package = package,
+        **kwargs
+    )
+    android_sign(
+        name = name + ".sign",
+        apk = name,
         **kwargs
     )

@@ -1,1 +1,27 @@
-exports_files(["defs.bzl"])
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+exports_files(
+    [
+        "defs.bzl",
+        "extensions.bzl",
+    ],
+    visibility = ["//docs:__pkg__"],
+)
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//react_native/android/private:bzl",
+        "//react_native/js/private:bzl",
+        "@rn_profile//:profile",
+    ],
+)
+
+bzl_library(
+    name = "extensions",
+    srcs = ["extensions.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//react_native/android/private:bzl"],
+)

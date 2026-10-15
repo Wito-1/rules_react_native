@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Bazel ${{ matrix.bazel }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The supported floor (bazel_compatibility) and the version in .bazelversion.
+          - { os: ubuntu-24.04, bazel: 8.x }
+          - { os: ubuntu-24.04, bazel: 9.2.0 }
+          # Apple Silicon: the macOS SDK/NDK/hermesc binaries.
+          - { os: macos-15, bazel: 9.2.0 }
+    env:
+      USE_BAZEL_VERSION: ${{ matrix.bazel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bazel-contrib/setup-bazel@0.19.1
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ matrix.os }}-${{ matrix.bazel }}
+          repository-cache: |
+            - MODULE.bazel
+            - examples/MODULE.bazel
+            - react_native/android/maven_tools_lock.json
+            - examples/android/maven_lock.json
+            - examples/android/maven_debug_lock.json
+            - examples/pnpm-lock.yaml
+
+      - name: Unit tests and API docs freshness
+        run: bazel test //...
+
+      # Builds both apps (release and debug) and checks every APK's manifest, 16 KiB alignment,
+      # signature, native libraries and assets with react_native_apk_test.
+      - name: Examples
+        working-directory: examples
+        run: bazel test //...
+
+      - name: Re-pinning is a no-op
+        if: matrix.os == 'ubuntu-24.04' && matrix.bazel == '9.2.0'
+        working-directory: examples
+        run: |
+          bazel run //:pin
+          git diff --exit-code -- android/
+
+  unsupported-host:
+    name: Linux arm64 fails with a clear error
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bazel-contrib/setup-bazel@0.19.1
+        with:
+          bazelisk-cache: true
+      - name: Expect the no_match_error
+        working-directory: examples
+        run: |
+          set +e
+          bazel build //hello:hello_lib 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -ne 0
+          grep -q "only for linux-x86_64 and macOS hosts" build.log

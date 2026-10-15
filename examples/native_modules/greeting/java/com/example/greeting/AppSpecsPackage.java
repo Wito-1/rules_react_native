@@ -1,7 +1,7 @@
-package com.example.nativemodules;
+package com.example.greeting;
 
 import androidx.annotation.Nullable;
-import com.example.nativemodules.specs.NativeLocalStorageSpec;
+import com.example.greeting.specs.NativeLocalStorageSpec;
 import com.facebook.react.BaseReactPackage;
 import com.facebook.react.bridge.NativeModule;
 import com.facebook.react.bridge.ReactApplicationContext;

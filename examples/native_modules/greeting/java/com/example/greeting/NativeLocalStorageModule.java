@@ -1,9 +1,9 @@
-package com.example.nativemodules;
+package com.example.greeting;
 
 import android.content.Context;
 import android.content.SharedPreferences;
 import androidx.annotation.Nullable;
-import com.example.nativemodules.specs.NativeLocalStorageSpec;
+import com.example.greeting.specs.NativeLocalStorageSpec;
 import com.facebook.react.bridge.ReactApplicationContext;
 
 /** Implements the NativeLocalStorage TurboModule spec on top of SharedPreferences. */

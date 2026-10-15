@@ -1,0 +1,26 @@
+load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@stardoc//stardoc:stardoc.bzl", "stardoc")
+
+stardoc(
+    name = "defs_doc",
+    out = "defs.gen.md",
+    input = "//react_native:defs.bzl",
+    deps = ["//react_native:defs"],
+)
+
+stardoc(
+    name = "extensions_doc",
+    out = "extensions.gen.md",
+    input = "//react_native:extensions.bzl",
+    deps = ["//react_native:extensions"],
+)
+
+# `bazel run //docs:update` regenerates the checked-in API docs; `bazel test //docs:all` fails
+# when they're stale.
+write_source_files(
+    name = "update",
+    files = {
+        "defs.md": ":defs.gen.md",
+        "extensions.md": ":extensions.gen.md",
+    },
+)

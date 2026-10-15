@@ -1,0 +1,18 @@
+load("@rules_react_native//react_native:defs.bzl", "react_native_android_library")
+
+# The app's native code as a library: a TurboModule, a Fabric component, a resource and an asset.
+# The app picks all of it up through `deps`.
+react_native_android_library(
+    name = "greeting",
+    srcs = [
+        "java/com/example/greeting/AppSpecsPackage.java",
+        "java/com/example/greeting/GreetingViewManager.java",
+        "java/com/example/greeting/NativeLocalStorageModule.java",
+    ],
+    assets = ["assets/greeting.txt"],
+    codegen = ["//native_modules:codegen"],
+    package = "com.example.greeting",
+    react_packages = ["com.example.greeting.AppSpecsPackage"],
+    res = ["res/values/colors.xml"],
+    visibility = ["//native_modules:__pkg__"],
+)

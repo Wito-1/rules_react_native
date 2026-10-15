@@ -2,6 +2,20 @@ load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
 
+py_library(
+    name = "maven_resolve_lib",
+    srcs = ["maven_resolve.py"],
+    imports = ["."],
+)
+
+py_test(
+    name = "maven_resolve_test",
+    size = "small",
+    srcs = ["maven_resolve_test.py"],
+    legacy_create_init = 0,
+    deps = [":maven_resolve_lib"],
+)
+
 # Resolves a Maven spec into a lockfile. Consumers run it through `react_native_maven_pin`; paths
 # are relative to the workspace `bazel run` is invoked from.
 py_binary(
@@ -39,6 +53,27 @@ py_test(
     size = "small",
     srcs = ["gen_r_test.py"],
     deps = [":gen_r_lib"],
+)
+
+py_binary(
+    name = "javac",
+    srcs = ["javac.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "apk_check",
+    srcs = ["apk_check.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "own_r_txt",
+    srcs = ["own_r_txt.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
 )
 
 py_library(
