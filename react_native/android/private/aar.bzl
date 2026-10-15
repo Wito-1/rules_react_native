@@ -15,6 +15,7 @@ AndroidLibraryInfo = provider(
         "compile_jars": "depset[File]: the library's jars plus its API closure, i.e. what a dependent compiles against (Gradle's compileClasspath)",
         "runtime_jars": "depset[File]: every jar the library needs at run time, to be dexed into the app",
         "react_packages": "depset[str]: ReactPackage classes the app's PackageList must instantiate",
+        "maven_runtime": "depset[str]: names of Maven artifacts (`group_artifact`) libraries compile against only; the app takes them from its own Maven set",
         "proguard_specs": "depset[struct(file, path)]: consumer R8/ProGuard rules (AAR proguard.txt, `consumerProguardFiles`); `path` may point inside `file` when it's a directory",
         "appmodules": "depset[struct]: C++ to compile into libappmodules.so and register in autolinking.cpp; see `appmodules_unit`",
     },
@@ -23,6 +24,7 @@ AndroidLibraryInfo = provider(
 def appmodules_unit(
         key,
         codegen = None,
+        codegen_cc_dirs = None,
         register_codegen_components = True,
         srcs = [],
         hdrs = [],
@@ -30,13 +32,18 @@ def appmodules_unit(
         tree_src_dirs = [],
         includes = [],
         component_descriptors = [],
-        cxx_modules = {}):
-    """What one library contributes to libappmodules.so.
+        cxx_modules = {},
+        soname = None):
+    """What one library contributes to libappmodules.so, or a shared library of its own.
 
     Args:
         key: Deduplicates units reached through several paths (diamonds).
         codegen: ReactNativeCodegenInfo, or None. Its C++ is compiled in and its
             `<library>_ModuleProvider` registered.
+        codegen_cc_dirs: Directories of the codegen output (relative to its jni/ root, "." for
+            the root itself; not recursive) whose sources are compiled. None compiles all of it.
+            Libraries that ship their own copy of the generated `<lib>.cpp` compile only the
+            components directory, as their CMakeLists.txt does.
         register_codegen_components: Register the codegen'd component descriptors with
             `<library>_registerComponentDescriptorsFromCodegen`. Libraries whose components have
             hand-written descriptors (codegen `interfaceOnly`) list them in `component_descriptors`
@@ -44,11 +51,15 @@ def appmodules_unit(
         srcs: C/C++ source Files.
         hdrs: Header Files.
         trees: Tree artifacts (e.g. an npm package) that `tree_src_dirs` and `includes` point into.
-        tree_src_dirs: Exec paths of directories inside `trees` whose sources are compiled.
+        tree_src_dirs: Exec paths inside `trees` of directories whose sources are compiled, or of
+            single source files.
         includes: Exec paths of include roots; searched before codegen output.
         component_descriptors: C++ ComponentDescriptor classes to register.
         cxx_modules: Pure C++ TurboModules, `{class: header}`: `class::kModuleName` maps to
             `std::make_shared<class>(jsInvoker)`.
+        soname: Build `lib<soname>.so` from this unit instead of compiling it into
+            libappmodules.so: a library's own native library (Gradle's `externalNativeBuild`),
+            which its Java loads by name.
 
     Returns:
         struct, safe to put in a depset.
@@ -57,6 +68,7 @@ def appmodules_unit(
         key = key,
         codegen_library = codegen.library_name if codegen else None,
         jni = codegen.jni if codegen else None,
+        codegen_cc_dirs = tuple(codegen_cc_dirs) if codegen_cc_dirs != None else None,
         register_codegen_components = register_codegen_components,
         srcs = tuple(srcs),
         hdrs = tuple(hdrs),
@@ -65,7 +77,54 @@ def appmodules_unit(
         includes = tuple(includes),
         component_descriptors = tuple(component_descriptors),
         cxx_modules = tuple([struct(cls = c, header = h) for c, h in sorted(cxx_modules.items())]),
+        soname = soname,
     )
+
+AndroidMavenSetInfo = provider(
+    doc = "Every artifact of one Maven lockfile, by target name.",
+    fields = {"artifacts": "dict[str, Target]"},
+)
+
+def resolve_app_deps(deps):
+    """An app's deps plus the Maven artifacts its libraries need, taken from the app's own set.
+
+    Libraries compile against their Maven dependencies only (from the consumer's release set); the
+    app ships them from the set among its deps, so a debug app gets them from the debug set.
+
+    Args:
+        deps: The app's deps, including one target with AndroidMavenSetInfo.
+
+    Returns:
+        list of targets, the needed artifacts first.
+    """
+    needed = depset(transitive = [i.maven_runtime for i in collect_android_infos(deps)]).to_list()
+    if not needed:
+        return deps
+    sets = [d for d in deps if AndroidMavenSetInfo in d]
+    if not sets:
+        fail("libraries need Maven artifacts %s, but the app has no Maven set among its deps" % needed)
+    artifacts = sets[0][AndroidMavenSetInfo].artifacts
+    missing = [n for n in needed if n not in artifacts]
+    if missing:
+        fail(("libraries need Maven artifacts %s, which %s doesn't pin. Add them to the spec's " +
+              "\"libraries\" and re-pin.") % (missing, sets[0].label))
+    return [artifacts[n] for n in needed] + deps
+
+def _android_maven_set_impl(ctx):
+    return [
+        merge_android_infos(deps = ctx.attr.roots, exports = ctx.attr.roots),
+        java_common.merge([d[JavaInfo] for d in ctx.attr.roots if JavaInfo in d]),
+        AndroidMavenSetInfo(artifacts = {name: target for target, name in ctx.attr.artifacts.items()}),
+    ]
+
+android_maven_set = rule(
+    implementation = _android_maven_set_impl,
+    doc = "`@<repo>//:all`: the lockfile's roots (what an app compiles against and ships), plus every artifact by name.",
+    attrs = {
+        "artifacts": attr.label_keyed_string_dict(providers = [AndroidLibraryInfo]),
+        "roots": attr.label_list(providers = [AndroidLibraryInfo]),
+    },
+)
 
 def collect_android_infos(deps):
     return [d[AndroidLibraryInfo] for d in deps if AndroidLibraryInfo in d]
@@ -82,6 +141,7 @@ def merge_android_infos(
         jars = [],
         react_packages = [],
         proguard_specs = [],
+        maven_runtime = [],
         appmodules = []):
     """Builds an AndroidLibraryInfo from a target's own parts and its deps/exports.
 
@@ -98,6 +158,7 @@ def merge_android_infos(
         react_packages: This target's own ReactPackage class names.
         appmodules: This target's own `appmodules_unit`s.
         proguard_specs: This target's own consumer rules, as `struct(file, path)`.
+        maven_runtime: Maven artifact names this target needs the app to ship.
 
     Returns:
         AndroidLibraryInfo.
@@ -126,6 +187,7 @@ def merge_android_infos(
         react_packages = depset(react_packages, transitive = [i.react_packages for i in infos]),
         appmodules = depset(appmodules, transitive = [i.appmodules for i in infos]),
         proguard_specs = depset(proguard_specs, transitive = [i.proguard_specs for i in infos]),
+        maven_runtime = depset(maven_runtime, transitive = [i.maven_runtime for i in infos]),
     )
 
 def _dirname(path):

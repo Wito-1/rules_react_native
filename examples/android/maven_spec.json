@@ -3,6 +3,18 @@
     "com.facebook.react:react-android:0.87.1",
     "com.facebook.hermes:hermes-android:250829098.0.17"
   ],
+  "libraries": [
+    "androidx.appcompat:appcompat:1.7.1",
+    "androidx.coordinatorlayout:coordinatorlayout:1.2.0",
+    "androidx.core:core-ktx:1.17.0",
+    "androidx.fragment:fragment-ktx:1.8.9",
+    "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0",
+    "androidx.transition:transition-ktx:1.7.0",
+    "com.facebook.fresco:fresco:3.7.0",
+    "com.facebook.fresco:imagepipeline-okhttp3:3.7.0",
+    "com.facebook.fresco:middleware:3.7.0",
+    "com.google.android.material:material:1.13.0"
+  ],
   "build_type": "release",
   "excludes": []
 }

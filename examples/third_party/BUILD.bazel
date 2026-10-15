@@ -1,14 +1,22 @@
 load("@npm//:defs.bzl", "npm_link_all_packages")
+load(":react_native_libraries.bzl", "react_native_libraries")
 load(
     "@rules_react_native//react_native:defs.bzl",
     "react_native_android_app",
     "react_native_apk_test",
+    "react_native_autolink",
     "react_native_bundle",
-    "react_native_codegen",
-    "react_native_npm_library",
 )
 
 npm_link_all_packages(name = "node_modules")
+
+# `bazel run :autolink` regenerates react_native_libraries.bzl from package.json's native deps:
+# react-native-safe-area-context, which is Kotlin with codegen'd specs and a hand-written C++
+# shadow node.
+react_native_autolink(
+    name = "autolink",
+    node_modules = ":node_modules",
+)
 
 react_native_bundle(
     name = "bundle_android",
@@ -21,44 +29,6 @@ react_native_bundle(
     ],
     node_modules = ":node_modules",
     platform = "android",
-)
-
-# react-native-safe-area-context from npm: Kotlin, codegen'd specs, and a hand-written C++ shadow
-# node. The attributes restate its android/build.gradle (new-architecture source sets),
-# src/main/jni/CMakeLists.txt and react-native.config.js.
-react_native_codegen(
-    name = "safe_area_context_codegen",
-    java_package = "com.th3rdwave.safeareacontext",
-    js_srcs_dir = "src/specs",
-    library_name = "safeareacontext",
-    node_modules = ":node_modules",
-    npm_package = "react-native-safe-area-context",
-)
-
-react_native_npm_library(
-    name = "safe_area_context",
-    # buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", ...
-    build_config = True,
-    cc_dirs = [
-        "android/src/main/jni",
-        "common/cpp/react/renderer/components/safeareacontext",
-    ],
-    cc_includes = [
-        "android/src/main/jni",
-        "common/cpp",
-    ],
-    codegen = [":safe_area_context_codegen"],
-    component_descriptors = [
-        "RNCSafeAreaProviderComponentDescriptor",
-        "RNCSafeAreaViewComponentDescriptor",
-    ],
-    java_dirs = [
-        "android/src/main/java",
-        "android/src/fabric/java",
-    ],
-    npm_package = ":node_modules/react-native-safe-area-context",
-    package = "com.th3rdwave.safeareacontext",
-    react_packages = ["com.th3rdwave.safeareacontext.SafeAreaContextPackage"],
 )
 
 react_native_android_app(
@@ -78,7 +48,7 @@ react_native_android_app(
         "android/res/values/strings.xml",
         "android/res/values/styles.xml",
     ],
-    deps = [":safe_area_context"],
+    deps = react_native_libraries(),
 )
 
 react_native_apk_test(

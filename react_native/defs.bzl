@@ -15,11 +15,13 @@ load("//react_native/android/private:appmodules.bzl", "react_native_appmodules")
 load("//react_native/android/private:java.bzl", _react_native_java_library = "react_native_java_library")
 load("//react_native/android/private:library.bzl", _react_native_android_library = "react_native_android_library", _react_native_npm_library = "react_native_npm_library")
 load("//react_native/android/private:pin.bzl", _react_native_maven_pin = "react_native_maven_pin")
+load("//react_native/js/private:autolink.bzl", _react_native_autolink = "react_native_autolink")
 load("//react_native/js/private:bundle.bzl", _react_native_bundle = "react_native_bundle")
 load("//react_native/js/private:codegen.bzl", _react_native_codegen = "react_native_codegen")
 load("//react_native/js/private:dev_server.bzl", _react_native_dev_server = "react_native_dev_server")
 
 react_native_android_library = _react_native_android_library
+react_native_autolink = _react_native_autolink
 react_native_apk_test = _react_native_apk_test
 react_native_bundle = _react_native_bundle
 react_native_codegen = _react_native_codegen

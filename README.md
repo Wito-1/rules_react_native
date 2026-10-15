@@ -188,14 +188,45 @@ library here carries `JavaInfo`), but the ruleset doesn't use it: it couldn't co
 inside an npm package, its Java half goes through rules_java's toolchain, and it brings
 rules_android into every consumer's graph.
 
-### Libraries from npm
+### Libraries from npm (autolinking)
 
-`react_native_npm_library` builds a native library from its installed npm package, without
-vendoring it. Its attributes restate what the package tells Gradle in `android/build.gradle`
-(source sets, `buildConfigField`), `src/main/jni/CMakeLists.txt` (C++ sources and includes) and
-`react-native.config.js` (component descriptors).
-[`examples/third_party`](examples/third_party) builds `react-native-safe-area-context`, which is
-Kotlin with a hand-written C++ shadow node:
+Native libraries installed from npm are built from their sources in `node_modules`, without
+vendoring. `react_native_autolink` is Gradle's autolinking for Bazel: it reads each dependency's
+`codegenConfig`, `react-native.config.js` and `android/build.gradle` (and the CMakeLists.txt files
+those name) and writes `react_native_libraries.bzl`, which declares a `react_native_codegen` and a
+`react_native_npm_library` per native dependency:
+
+```starlark
+load(":react_native_libraries.bzl", "react_native_libraries")
+
+react_native_autolink(name = "autolink", node_modules = ":node_modules")   # bazel run :autolink
+
+react_native_android_app(name = "app", deps = react_native_libraries(), ...)
+```
+
+`autolink_test` fails when the file is stale (after adding or upgrading a library), like
+`bazel run //:gazelle` and its diff check. `bazel run :autolink` also lists the Maven artifacts
+the libraries use (from their `build.gradle` `dependencies`): put those in the Maven spec's
+`"libraries"` and re-pin. Libraries compile against them; an app ships only the ones its own
+libraries need, from its own (release or debug) set, so they don't bloat other apps.
+[`examples/ecosystem`](examples/ecosystem) uses React Navigation's native stack on
+react-native-screens, react-native-gesture-handler, react-native-svg and
+react-native-safe-area-context, all autolinked; [`examples/third_party`](examples/third_party)
+autolinks react-native-safe-area-context alone. What the generator reproduces:
+
+- **Source sets**: the directories `build.gradle` adds for the new architecture; optional
+  integrations (`svg/` vs `nosvg/`) follow the app's own dependencies.
+- **C++**: the `cmakeListsPath` CMakeLists.txt's sources (custom shadow nodes, hand-written
+  component descriptors) go into the app's `libappmodules.so`, as Gradle links them; only the
+  codegen output that CMakeLists.txt globs is compiled (libraries that ship their own `<lib>.cpp`
+  take just the components). The library's own `externalNativeBuild` becomes its own
+  `lib<name>.so` (`shared_libraries`), which its Java loads by name.
+- **Resources**, including several `res.srcDirs`; **consumer ProGuard rules**; **BuildConfig**
+  with typed `buildConfigField`s (values `build.gradle` computes take the type's zero value); R
+  classes of the library's dependencies (`com.facebook.react.R`), as AGP's compile R jars;
+  dependencies between libraries (`rootProject.subprojects.find { it.name == ... }`).
+
+The hand-written form of the same target, for a library the generator doesn't handle:
 
 ```starlark
 react_native_codegen(
@@ -213,7 +244,7 @@ react_native_npm_library(
     package = "com.th3rdwave.safeareacontext",
     java_dirs = ["android/src/main/java", "android/src/fabric/java"],
     build_config = True,
-    cc_dirs = ["android/src/main/jni", "common/cpp/react/renderer/components/safeareacontext"],
+    cc_srcs = ["common/cpp/react/renderer/components/safeareacontext/RNCSafeAreaViewShadowNode.cpp", ...],
     cc_includes = ["android/src/main/jni", "common/cpp"],
     codegen = [":safe_area_context_codegen"],
     component_descriptors = ["RNCSafeAreaProviderComponentDescriptor", "RNCSafeAreaViewComponentDescriptor"],
@@ -221,11 +252,10 @@ react_native_npm_library(
 )
 ```
 
-The package's files are only known at execution time (rules_js extracts it in an action), so
-the directory attributes are paths inside it rather than labels. Its C++ is compiled into the app's
-`libappmodules.so` (React Native's Gradle setup builds one `.so` per library), with its include
-directories ahead of codegen's, so a library's own `<lib>.h` shadows the generated one as its
-CMakeLists.txt arranges.
+The package's files are only known at execution time (rules_js extracts it in an action), so its
+attributes are paths inside it rather than labels. If a stale generated file stops the package
+from loading (e.g. after a ruleset upgrade renamed an attribute), replace it with
+`def react_native_libraries(**kwargs): return []` and run `:autolink` again.
 
 ### C++ in libraries, and pure C++ TurboModules
 
@@ -308,6 +338,7 @@ and runs every test):
 | [`native_modules`](examples/native_modules) | Codegen'd TurboModule and Fabric component in a library, with resources and assets |
 | [`cxx_module`](examples/cxx_module) | A pure C++ TurboModule, no Java |
 | [`third_party`](examples/third_party) | `react-native-safe-area-context` from npm (Kotlin, codegen, custom C++ shadow node), and Kotlin app code |
+| [`ecosystem`](examples/ecosystem) | React Navigation's native stack, react-native-screens, -gesture-handler, -svg, -safe-area-context: autolinked, minified |
 | [`assets`](examples/assets) | Density-qualified images (`@2x`, `@3x`) and a custom font |
 | [`fleet`](examples/fleet) | Two apps sharing a workspace JS package and a native library, each overriding a library resource |
 | [`brownfield`](examples/brownfield) | A native launcher activity opening React Native screens with launch options |
@@ -443,9 +474,9 @@ honored.
 
 ## Limitations
 
-- **npm libraries are declared, not autolinked.** `react_native_npm_library` needs the facts
-  Gradle reads from the package (source sets, C++ dirs, component descriptors) written down once.
-  Libraries that need annotation processors or KSP (e.g. Room) aren't supported.
+- **Autolinking reads build files, it doesn't run them.** The generator understands the
+  conventional shapes of `build.gradle` and `CMakeLists.txt`; logic beyond that (computed source
+  sets, CMake conditionals) needs a hand-written `react_native_npm_library`.
 - **Library BuildConfig is release-only.** A library is built once for every app variant, so its
   `BuildConfig.DEBUG` is false, as in a release AAR.
 - **No resource shrinking** (`shrinkResources`); R8 shrinks code only.

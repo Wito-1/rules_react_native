@@ -128,3 +128,10 @@ py_binary(
     legacy_create_init = 0,
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "merge_zips",
+    srcs = ["merge_zips.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
+)

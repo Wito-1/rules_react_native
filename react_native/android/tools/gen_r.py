@@ -5,6 +5,10 @@ resources are linked, so every library package needs its own R class carrying th
 library R only declares the symbols listed in that library's R.txt, which keeps the dex small
 (an R class per package with every app symbol would multiply the field count by the number of
 libraries).
+
+With --compile_only it instead writes the R classes a library compiles against: one per
+dependency package, from the dependency's own R.txt, with non-final fields so no id is inlined
+(AGP's compile-time R jars). The library leaves them out of its jar; the app writes the real ones.
 """
 
 import argparse
@@ -36,7 +40,7 @@ def parse_r_txt(path: str) -> list[Symbol]:
     return symbols
 
 
-def render(package: str, symbols: list[Symbol]) -> str:
+def render(package: str, symbols: list[Symbol], final: bool = True) -> str:
     by_type: dict[str, list[Symbol]] = {}
     for s in symbols:
         by_type.setdefault(s.res_type, []).append(s)
@@ -47,7 +51,8 @@ def render(package: str, symbols: list[Symbol]) -> str:
             value = s.value
             if s.java_type == "int[]":
                 value = "new int[] " + value
-            lines.append(f"    public static final {s.java_type} {s.name} = {value};")
+            modifiers = "public static final" if final else "public static"
+            lines.append(f"    {modifiers} {s.java_type} {s.name} = {value};")
         lines.append("  }")
     lines.append("}")
     return "\n".join(lines) + "\n"
@@ -63,11 +68,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--r_txt",
-        required=True,
         help="R.txt written by `aapt2 link --output-text-symbols`",
     )
+    parser.add_argument("--package", help="App package; its R gets every symbol")
     parser.add_argument(
-        "--package", required=True, help="App package; its R gets every symbol"
+        "--compile_only",
+        action="store_true",
+        help="Write each --library's R from its own R.txt, non-final, for compiling a library",
     )
     parser.add_argument(
         "--library",
@@ -86,10 +93,19 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
+    sources: dict[str, str] = {}
+    if args.compile_only:
+        for entry in args.library:
+            package, r_txt = entry.split("=", 1)
+            sources.setdefault(package, render(package, parse_r_txt(r_txt), final=False))
+        _write(args.out, sources, [])
+        return 0
+    if not args.r_txt or not args.package:
+        parser.error("--r_txt and --package are required without --compile_only")
+
     final = parse_r_txt(args.r_txt)
     final_by_key = {(s.res_type, s.name): s for s in final}
 
-    sources: dict[str, str] = {}
     sources[args.package] = render(args.package, final)
     for entry in args.library:
         package, r_txt = entry.split("=", 1)
@@ -109,14 +125,18 @@ def main() -> int:
             )
         sources[package] = render(package, symbols)
 
-    with zipfile.ZipFile(args.out, "w") as out:
+    _write(args.out, sources, args.java)
+    return 0
+
+
+def _write(path: str, sources: dict[str, str], java: list[str]) -> None:
+    with zipfile.ZipFile(path, "w") as out:
         for package in sorted(sources):
             write_entry(out, package.replace(".", "/") + "/R.java", sources[package])
-        for entry in sorted(args.java):
-            path, src = entry.split("=", 1)
+        for entry in sorted(java):
+            src_path, src = entry.split("=", 1)
             with open(src) as f:
-                write_entry(out, path, f.read())
-    return 0
+                write_entry(out, src_path, f.read())
 
 
 if __name__ == "__main__":

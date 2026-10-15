@@ -61,13 +61,13 @@ def _library_manifest(ctx, manifest_path, inputs):
 
 def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, kotlin, assets, appmodules, proguard_specs):
     """Everything after manifest and resource compilation, shared by both rules."""
-    compile_only = [ctx.attr._react_native] if ctx.attr.react_native else []
+    compile_only = ([ctx.attr._react_native] if ctx.attr.react_native else []) + ctx.attr.maven_deps
     dep_infos = collect_android_infos(ctx.attr.deps + ctx.attr.exports + compile_only)
 
     r_txt = None
     r_srcs = None
+    dep_resources = depset(transitive = [i.resources for i in dep_infos], order = "postorder").to_list()
     if flata:
-        dep_resources = depset(transitive = [i.resources for i in dep_infos], order = "postorder").to_list()
         dep_flatas = [r.flata for r in dep_resources if r.flata]
 
         # A static-lib link checks references against the deps' resources and assigns placeholder
@@ -111,16 +111,38 @@ def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, 
             progress_message = "Listing the resources of %{label}",
         )
 
-    if ctx.attr.build_config or ctx.attr.build_config_fields:
+    if ctx.attr.build_config or ctx.attr.build_config_fields or ctx.attr.build_config_constants:
         build_config = ctx.actions.declare_file("%s/build_config/%s/BuildConfig.java" % (ctx.label.name, ctx.attr.package.replace(".", "/")))
         ctx.actions.write(build_config, _LIBRARY_BUILD_CONFIG.format(
             package = ctx.attr.package,
             fields = "".join([
                 "  public static final String %s = %s;\n" % (k, json.encode(v))
                 for k, v in sorted(ctx.attr.build_config_fields.items())
+            ] + [
+                "  public static final %s %s = %s;\n" % (v.split(" ", 1)[0], k, v.split(" ", 1)[1])
+                for k, v in sorted(ctx.attr.build_config_constants.items())
             ]),
         ))
         srcs = srcs + [build_config]
+
+    # The dependencies' R classes, e.g. com.facebook.react.R, which libraries reference directly.
+    dep_r = {r.package: r.r_txt for r in dep_resources if r.r_txt and r.package != ctx.attr.package}
+    dep_r_srcjars = []
+    if dep_r:
+        dep_r_srcjar = ctx.actions.declare_file(ctx.label.name + "/dep_r.srcjar")
+        gen_args = ctx.actions.args()
+        gen_args.add("--compile_only")
+        gen_args.add_all(["%s=%s" % (p, f.path) for p, f in sorted(dep_r.items())], before_each = "--library")
+        gen_args.add("--out", dep_r_srcjar)
+        ctx.actions.run(
+            executable = ctx.executable._gen_r,
+            arguments = [gen_args],
+            inputs = dep_r.values(),
+            outputs = [dep_r_srcjar],
+            mnemonic = "AndroidLibraryDepR",
+            progress_message = "Generating dependency R classes for %{label}",
+        )
+        dep_r_srcjars = [dep_r_srcjar]
 
     jar = ctx.actions.declare_file("lib%s.jar" % ctx.label.name)
     codegen_srcjars = [c[DefaultInfo].files.to_list()[0] for c in ctx.attr.codegen]
@@ -128,11 +150,11 @@ def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, 
         ctx,
         jar,
         srcs = srcs,
-        srcjars = srcjars + codegen_srcjars,
+        srcjars = srcjars + codegen_srcjars + dep_r_srcjars,
         srcdirs = srcdirs + ([r_srcs] if r_srcs else []),
         srcdir_inputs = srcdir_inputs,
         classpath = compile_classpath(ctx.attr.deps + ctx.attr.exports + compile_only),
-        exclude_r = [ctx.attr.package],
+        exclude_r = [ctx.attr.package] + sorted(dep_r.keys()),
         kotlin = kotlin,
     )
 
@@ -147,6 +169,7 @@ def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, 
             react_packages = ctx.attr.react_packages,
             appmodules = appmodules,
             proguard_specs = proguard_specs,
+            maven_runtime = [d.label.name for d in ctx.attr.maven_deps],
         ),
         JavaInfo(
             output_jar = jar,
@@ -157,12 +180,13 @@ def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, 
         OutputGroupInfo(r_txt = depset([r_txt] if r_txt else [])),
     ]
 
-def _codegen_units(ctx, own_components):
+def _codegen_units(ctx, own_components, codegen_cc_dirs = None):
     # With hand-listed descriptors, the library's codegen'd ones are registered from that list.
     return [
         appmodules_unit(
             key = c[ReactNativeCodegenInfo].library_name,
             codegen = c[ReactNativeCodegenInfo],
+            codegen_cc_dirs = codegen_cc_dirs,
             register_codegen_components = not own_components,
         )
         for c in ctx.attr.codegen
@@ -217,6 +241,10 @@ _COMMON_ATTRS = dict(JAVA_ATTRS, **{
         doc = "Generate `<package>.BuildConfig` (AGP's `buildFeatures.buildConfig`): `DEBUG` (false), " +
               "`LIBRARY_PACKAGE_NAME`, `BUILD_TYPE`, `IS_NEW_ARCHITECTURE_ENABLED` and `IS_HERMES_ENABLED` (true).",
     ),
+    "build_config_constants": attr.string_dict(
+        doc = "Extra typed BuildConfig fields, as Gradle's `buildConfigField(type, name, value)`: " +
+              "`{\"NAME\": \"<java type> <java expression>\"}`, e.g. `{\"DEBUG_LOGGING\": \"boolean false\"}`; implies `build_config`.",
+    ),
     "build_config_fields": attr.string_dict(doc = "Extra `public static final String` BuildConfig fields; implies `build_config`."),
     "codegen": attr.label_list(providers = [ReactNativeCodegenInfo], doc = "`react_native_codegen` targets for this library's specs."),
     "component_descriptors": attr.string_list(
@@ -225,6 +253,11 @@ _COMMON_ATTRS = dict(JAVA_ATTRS, **{
     ),
     "deps": attr.label_list(providers = [[AndroidLibraryInfo], [JavaInfo]]),
     "exports": attr.label_list(providers = [[AndroidLibraryInfo], [JavaInfo]], doc = "Deps that are part of this library's API (Gradle's `api`)."),
+    "maven_deps": attr.label_list(
+        providers = [AndroidLibraryInfo],
+        doc = "Maven artifacts the library compiles against, from the consumer's Maven set. Compile-only, as React Native " +
+              "itself is: the app's own Maven set, which must pin them, ships them in the variant it builds.",
+    ),
     "package": attr.string(mandatory = True, doc = "Java package of the library's R class (AGP's `namespace`)."),
     "react_native": attr.bool(
         default = True,
@@ -232,6 +265,7 @@ _COMMON_ATTRS = dict(JAVA_ATTRS, **{
     ),
     "react_packages": attr.string_list(doc = "Fully-qualified ReactPackage classes the app's PackageList must instantiate."),
     "_aapt2": attr.label(default = "@rn_android_sdk//:aapt2", allow_single_file = True, cfg = "exec"),
+    "_gen_r": attr.label(default = "//react_native/android/tools:gen_r", executable = True, cfg = "exec"),
     "_manifest_merger_classpath": attr.label(default = "@rn_android_tools_maven//:all", cfg = "exec"),
     "_react_native": attr.label(default = "@rn_maven_default//:all"),
     "_own_r_txt": attr.label(default = "//react_native/android/tools:own_r_txt", executable = True, cfg = "exec"),
@@ -283,18 +317,45 @@ def _react_native_npm_library_impl(ctx):
         return pkg.path + "/" + rel
 
     manifest = _library_manifest(ctx, path(ctx.attr.manifest) if ctx.attr.manifest else None, [pkg])
-    flata = None
-    if ctx.attr.res_dir:
-        flata = compile_resources(ctx, ctx.file._aapt2, ctx.label.name + "/res", path(ctx.attr.res_dir), [pkg])
+    flatas = [
+        compile_resources(ctx, ctx.file._aapt2, "%s/res_%d" % (ctx.label.name, i), path(d), [pkg])
+        for i, d in enumerate(ctx.attr.res_dirs)
+    ]
+    flata = flatas[0] if len(flatas) == 1 else None
+    if len(flatas) > 1:
+        flata = ctx.actions.declare_file(ctx.label.name + "/res.flata")
+        merge_args = ctx.actions.args()
+        merge_args.add("--out", flata)
+        merge_args.add_all(flatas)
+        ctx.actions.run(
+            executable = ctx.executable._merge_zips,
+            arguments = [merge_args],
+            inputs = flatas,
+            outputs = [flata],
+            mnemonic = "AndroidMergeResources",
+            progress_message = "Merging the resource directories of %{label}",
+        )
 
-    appmodules = _codegen_units(ctx, ctx.attr.component_descriptors)
-    if ctx.attr.cc_dirs or ctx.attr.component_descriptors:
+    appmodules = _codegen_units(
+        ctx,
+        ctx.attr.component_descriptors,
+        ctx.attr.codegen_cc_dirs if ctx.attr.codegen_cc_dirs else None,
+    )
+    if ctx.attr.cc_dirs or ctx.attr.cc_srcs or ctx.attr.component_descriptors:
         appmodules.append(appmodules_unit(
             key = str(ctx.label),
             trees = [pkg],
-            tree_src_dirs = [path(d) for d in ctx.attr.cc_dirs],
+            tree_src_dirs = [path(d) for d in ctx.attr.cc_dirs + ctx.attr.cc_srcs],
             includes = [path(d) for d in ctx.attr.cc_includes],
             component_descriptors = ctx.attr.component_descriptors,
+        ))
+    for soname, srcs in sorted(ctx.attr.shared_libraries.items()):
+        appmodules.append(appmodules_unit(
+            key = "%s#%s" % (ctx.label, soname),
+            trees = [pkg],
+            tree_src_dirs = [path(s) for s in srcs],
+            includes = [path(i) for i in ctx.attr.shared_library_includes.get(soname, [])],
+            soname = soname,
         ))
 
     return _build_library(
@@ -321,7 +382,13 @@ Java and Kotlin under `java_dirs` are compiled together; C++ under `cc_dirs` (cu
 the library's own `<lib>.h`) and its `codegen` are compiled into the app's libappmodules.so and
 registered in autolinking.cpp. Directory attributes are paths inside the package.""",
     attrs = dict(_COMMON_ATTRS, **{
-        "cc_dirs": attr.string_list(doc = "Directories whose .c/.cc/.cpp files are compiled (CMakeLists.txt's sources), e.g. `[\"android/src/main/jni\", \"common/cpp/react/renderer/components/foo\"]`."),
+        "cc_dirs": attr.string_list(doc = "Directories whose .c/.cc/.cpp files are compiled into libappmodules.so (the sources of the CMakeLists.txt react-native.config.js names), e.g. `[\"android/src/main/jni\", \"common/cpp/react/renderer/components/foo\"]`."),
+        "cc_srcs": attr.string_list(doc = "Single source files compiled into libappmodules.so, like `cc_dirs`."),
+        "codegen_cc_dirs": attr.string_list(
+            doc = "Directories of the `codegen` output (relative to its jni/ root, `.` for the root) to compile, " +
+                  "for libraries whose CMakeLists.txt takes only part of it (e.g. because they ship their own " +
+                  "`<lib>.cpp`). Empty compiles all of it.",
+        ),
         "cc_includes": attr.string_list(doc = "Include roots (CMakeLists.txt's target_include_directories); searched before codegen output."),
         "java_dirs": attr.string_list(
             default = ["android/src/main/java"],
@@ -330,6 +397,12 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
         "manifest": attr.string(default = "android/src/main/AndroidManifest.xml", doc = "Library manifest; empty for none."),
         "proguard_specs": attr.string_list(doc = "R8/ProGuard rules files in the package that apps must apply (`consumerProguardFiles`), e.g. `[\"android/proguard-rules.pro\"]`."),
         "npm_package": attr.label(mandatory = True, doc = "The package's link target from `npm_link_all_packages`, e.g. `:node_modules/react-native-safe-area-context`."),
-        "res_dir": attr.string(doc = "res/ directory, if the library has resources, e.g. `android/src/main/res`."),
+        "res_dirs": attr.string_list(doc = "res/ directories (Gradle's `res.srcDirs`), e.g. `[\"android/src/main/res\"]`; later ones overlay earlier ones."),
+        "shared_libraries": attr.string_list_dict(
+            doc = "The library's own native libraries (its `externalNativeBuild` CMakeLists.txt), `{name: [sources]}`: " +
+                  "`lib<name>.so` is built per ABI with React Native's flags and libraries and packaged next to them.",
+        ),
+        "shared_library_includes": attr.string_list_dict(doc = "Include roots of each of `shared_libraries`."),
+        "_merge_zips": attr.label(default = "//react_native/android/tools:merge_zips", executable = True, cfg = "exec"),
     }),
 )

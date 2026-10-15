@@ -64,5 +64,21 @@ class GenRTest(unittest.TestCase):
         self.assertIn("com/app/BuildConfig.java", self.sources)
 
 
+class CompileOnlyTest(unittest.TestCase):
+    def test_dependency_r_classes_are_non_final(self) -> None:
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        lib = tmp / "lib_R.txt"
+        lib.write_text(LIBRARY_R_TXT)
+        out = tmp / "out.srcjar"
+        sys.argv = ["gen_r", "--compile_only", f"--library=com.lib={lib}", f"--out={out}"]
+        self.assertEqual(gen_r.main(), 0)
+        with zipfile.ZipFile(out) as z:
+            self.assertEqual(z.namelist(), ["com/lib/R.java"])
+            src = z.read("com/lib/R.java").decode()
+        self.assertIn("public static int colorAccent = 0x7f000001;", src)
+        self.assertIn("public static int removed_by_app = 0x7f000003;", src)
+        self.assertNotIn("final int", src)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,55 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load(":react_native_libraries.bzl", "react_native_libraries")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_apk_test",
+    "react_native_autolink",
+    "react_native_bundle",
+)
+
+npm_link_all_packages(name = "node_modules")
+
+react_native_autolink(
+    name = "autolink",
+    node_modules = ":node_modules",
+)
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = [
+        "App.tsx",
+        "app.json",
+        "babel.config.js",
+        "index.js",
+        "package.json",
+    ],
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+react_native_android_app(
+    name = "ecosystem",
+    srcs = [
+        "android/java/com/example/ecosystem/MainActivity.java",
+        "android/java/com/example/ecosystem/MainApplication.java",
+    ],
+    bundle = ":bundle_android",
+    manifest = "android/AndroidManifest.xml",
+    minify = True,
+    package = "com.example.ecosystem",
+    res = [
+        "android/res/drawable/rn_edit_text_material.xml",
+        "android/res/values/strings.xml",
+        "android/res/values/styles.xml",
+    ],
+    deps = react_native_libraries(),
+)
+
+react_native_apk_test(
+    name = "ecosystem_apk_test",
+    aab = True,
+    apk = ":ecosystem",
+    assets = ["index.android.bundle"],
+    package = "com.example.ecosystem",
+)

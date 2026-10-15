@@ -152,7 +152,7 @@ def _android_maven_repository_impl(rctx):
     lock = json.decode(rctx.read(rctx.attr.lock_file))
     import_bzl = str(rctx.attr._aar_bzl)
     build = [
-        'load("{}", "android_maven_import")'.format(import_bzl),
+        'load("{}", "android_maven_import", "android_maven_set")'.format(import_bzl),
         "",
         'package(default_visibility = ["//visibility:public"])',
         "",
@@ -201,8 +201,10 @@ def _android_maven_repository_impl(rctx):
 
     # The roots and their API closure form the app's compile classpath, as Gradle's
     # `implementation(react-android)` would; everything else is runtime-only.
+    # Every artifact is also reachable by name, for the Maven dependencies of an app's libraries.
     roots = repr([":" + r for r in lock["roots"]])
-    build.append("android_maven_import(\n    name = \"_all\",\n    coordinate = \"all\",\n    deps = {0},\n    exports = {0},\n)\n".format(roots))
+    artifacts = repr({":" + name: name for name in sorted(lock["artifacts"])})
+    build.append("android_maven_set(\n    name = \"_all\",\n    roots = {},\n    artifacts = {},\n)\n".format(roots, artifacts))
     rctx.file("BUILD.bazel", "\n".join(build))
 
 android_maven_repository = repository_rule(

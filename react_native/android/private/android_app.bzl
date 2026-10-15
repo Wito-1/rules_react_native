@@ -2,7 +2,7 @@
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "compile_resources")
+load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "compile_resources", "resolve_app_deps")
 load(":java.bzl", "JAVA_ATTRS", "run_java_tool")
 
 AndroidAppResourcesInfo = provider(
@@ -163,7 +163,7 @@ def _react_packages(ctx, infos):
     return packages.keys()
 
 def _android_app_resources_impl(ctx):
-    infos = collect_android_infos(ctx.attr.deps)
+    infos = collect_android_infos(resolve_app_deps(ctx.attr.deps))
     libraries = depset(transitive = [i.resources for i in infos], order = "postorder").to_list()
 
     merged_manifest = _merge_manifests(ctx, libraries)
@@ -299,7 +299,7 @@ def _app_assets(files):
 
 def _android_apk_impl(ctx):
     res_info = ctx.attr.resources[AndroidAppResourcesInfo]
-    infos = collect_android_infos(ctx.attr.deps)
+    infos = collect_android_infos(resolve_app_deps(ctx.attr.deps))
     runtime_jars = depset(transitive = [i.runtime_jars for i in infos] + [
         d[JavaInfo].transitive_runtime_jars
         for d in ctx.attr.deps
@@ -491,7 +491,7 @@ def _app_bundle(ctx, res_info, package, mapping):
 
     # Play reads these from the bundle's metadata: deobfuscation of Java stack traces and
     # symbolication of native ones, with no separate upload.
-    infos = collect_android_infos(ctx.attr.deps)
+    infos = collect_android_infos(resolve_app_deps(ctx.attr.deps))
     debug_libs = [l for l in depset(transitive = [i.native_debug_libs for i in infos]).to_list() if l.abi in ctx.attr.abis]
     metadata = [("com.android.tools.build.debugsymbols/%s/%s.dbg" % (l.abi, l.file.basename), l.file) for l in debug_libs]
     if mapping:

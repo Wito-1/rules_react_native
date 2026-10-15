@@ -51,11 +51,21 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   `react_native_npm_library` finds the package's store directory among the link target's files and
   addresses everything inside it by path (`--srcdir` for javac.py, `args.add_all(map_each = ...,
   allow_closure = True)` for C++ sources). Never try to glob or label files inside it.
+- **Autolinking** (`react_native/js/autolink.cjs`) reads package.json, react-native.config.js,
+  build.gradle and CMakeLists.txt with regexes and a tiny CMake evaluator (set, file(GLOB),
+  add_library, include dirs; conditionals ignored). Keep its output stable: every consumer's
+  `autolink_test` fails when the generated text changes. Libraries' Gradle Maven deps are
+  `maven_deps` (compile-only, release set); `AndroidLibraryInfo.maven_runtime` names them and
+  `resolve_app_deps` takes them from the app's own `@<repo>//:all` (`android_maven_set`), so apps
+  ship only what their libraries need. Spec `"libraries"` pin such artifacts outside the roots.
+- **Library R classes of dependencies**: `gen_r.py --compile_only` writes non-final R classes for
+  every dependency package with an R.txt; they're excluded from the library jar.
 - **libappmodules.so is built from `appmodules_unit`s** (`aar.bzl`): one per codegen library plus
   one per library with C++, deduplicated by key. A unit's own includes come before codegen's, so a
   library's hand-written `<lib>.h` shadows the generated one. `component_descriptors` replaces
   `<lib>_registerComponentDescriptorsFromCodegen` (codegen `interfaceOnly` components have no
-  generated descriptor); `cxx_modules` fills `cxxModuleProvider`.
+  generated descriptor); `cxx_modules` fills `cxxModuleProvider`; `codegen_cc_dirs` limits which
+  codegen sources compile; a unit with `soname` becomes its own `lib<soname>.so`.
 - **Shipping outputs**: `android_apk` dexes with D8, or R8 when `minify` (`tools/r8.py` gathers the
   rules: defaults, aapt2 `--proguard`, `AndroidLibraryInfo.proguard_specs`, jars'
   `META-INF/com.android.tools/r8*` over `META-INF/proguard`). The `.aab` reuses the APK's
@@ -111,4 +121,4 @@ publish-to-bcr templates.
 | [`react_native/android/tools/`](react_native/android/tools) | Python tools (`maven_resolve`, `gen_r`, `build_apk`, `javac`, `r8`, `own_r_txt`, `apk_check`) and their unittest tests |
 | [`react_native/js/`](react_native/js) | `bundle.cjs`, `dev_server.cjs`, `codegen.cjs`, the shared `metro_config.cjs`, and their rules |
 | [`docs/`](docs) | Stardoc-generated API reference (`bazel run //docs:update`) |
-| [`examples/`](examples) | Consumer module: `hello`, `native_modules`, `cxx_module`, `third_party`, `assets`, `fleet`, `brownfield`, `variants`, `connect` (the README's Examples table), Maven specs/lockfiles, `:pin` |
+| [`examples/`](examples) | Consumer module: `hello`, `native_modules`, `cxx_module`, `third_party`, `assets`, `fleet`, `brownfield`, `variants`, `connect`, `ecosystem` (the README's Examples table), Maven specs/lockfiles, `:pin` |

@@ -1,7 +1,7 @@
 """Compiles the app's libappmodules.so, which registers React Native's TurboModule providers."""
 
 load("//react_native/js/private:codegen.bzl", "ReactNativeCodegenInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "appmodules_unit", "collect_android_infos", "merge_android_infos")
+load(":aar.bzl", "AndroidLibraryInfo", "appmodules_unit", "collect_android_infos", "merge_android_infos", "resolve_app_deps")
 
 _ABI_TARGETS = {
     "arm64-v8a": "aarch64-linux-android",
@@ -101,12 +101,27 @@ def _autolinking_cpp(ctx, units):
 def _cpp_sources(f):
     return f.path if f.extension in ("c", "cc", "cpp") else None
 
-def _tree_sources(dirs):
-    prefixes = [d.rstrip("/") + "/" for d in dirs]
+def _codegen_sources(dirs):
+    wanted = {d: True for d in dirs}
 
     def map_each(f):
         if f.extension not in ("c", "cc", "cpp"):
             return None
+        rel = f.tree_relative_path
+        directory = rel[:rel.rfind("/")] if "/" in rel else "."
+        return f.path if directory in wanted else None
+
+    return map_each
+
+def _tree_sources(paths):
+    exact = {p: True for p in paths}
+    prefixes = [p.rstrip("/") + "/" for p in paths]
+
+    def map_each(f):
+        if f.extension not in ("c", "cc", "cpp"):
+            return None
+        if f.path in exact:
+            return f.path
         for prefix in prefixes:
             if f.path.startswith(prefix):
                 return f.path
@@ -114,8 +129,60 @@ def _tree_sources(dirs):
 
     return map_each
 
+def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs):
+    """Builds a library's own lib<soname>.so with the same flags and React Native libraries."""
+    unstripped = ctx.actions.declare_file("%s/unstripped/%s/lib%s.so" % (ctx.label.name, abi, soname))
+    out = ctx.actions.declare_file("%s/%s/lib%s.so" % (ctx.label.name, abi, soname))
+    args = ctx.actions.args()
+    args.add("--target=%s%d" % (_ABI_TARGETS[abi], ctx.attr.min_sdk))
+    args.add("-shared")
+    args.add_all(_COPTS)
+    if not ctx.attr.debug:
+        args.add_all(_RELEASE_COPTS)
+    args.add_all(ctx.attr.copts)
+    args.add_all(unit.includes, format_each = "-I%s", uniquify = True)
+    args.add_all({f.dirname: True for f in unit.hdrs}.keys(), format_each = "-I%s")
+    args.add_all(include_dirs, format_each = "-I%s")
+    args.add_all(unit.srcs)
+    if unit.tree_src_dirs:
+        args.add_all(unit.trees, map_each = _tree_sources(unit.tree_src_dirs), allow_closure = True)
+    args.add("-nostdlib++")
+    args.add_all([link_libs[l] for l in _LINK_LIBS])
+    args.add_all([
+        "-llog",
+        "-landroid",
+        "-Wl,--no-undefined",
+        "-Wl,--build-id=none",
+        "-Wl,-z,max-page-size=16384",
+        "-Wl,-soname,lib%s.so" % soname,
+        "-ffile-prefix-map=%s=." % ctx.bin_dir.path,
+        "-g",
+    ])
+    args.add("-o", unstripped)
+    ctx.actions.run(
+        executable = ctx.file._clang,
+        arguments = [args],
+        inputs = depset(
+            list(unit.srcs) + list(unit.hdrs) + list(unit.trees) + link_libs.values(),
+            transitive = [headers],
+        ),
+        tools = ctx.files._toolchain_files,
+        outputs = [unstripped],
+        mnemonic = "ReactNativeSharedLibrary",
+        progress_message = "Compiling lib%s.so for %s of %%{label}" % (soname, abi),
+    )
+    ctx.actions.run(
+        executable = ctx.file._objcopy,
+        arguments = ["--strip-unneeded", unstripped.path, out.path],
+        inputs = [unstripped],
+        outputs = [out],
+        mnemonic = "ReactNativeStrip",
+        progress_message = "Stripping lib%s.so for %s of %%{label}" % (soname, abi),
+    )
+    return out, unstripped
+
 def _react_native_appmodules_impl(ctx):
-    infos = collect_android_infos(ctx.attr.deps)
+    infos = collect_android_infos(resolve_app_deps(ctx.attr.deps))
     native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
     headers = depset(transitive = [i.cc_headers for i in infos])
     include_dirs = depset(transitive = [i.cc_include_dirs for i in infos]).to_list()
@@ -125,8 +192,12 @@ def _react_native_appmodules_impl(ctx):
     for c in ctx.attr.codegen:
         info = c[ReactNativeCodegenInfo]
         units.setdefault(info.library_name, appmodules_unit(key = info.library_name, codegen = info))
+    shared = {}
     for u in depset(transitive = [i.appmodules for i in infos]).to_list():
-        units.setdefault(u.key, u)
+        if u.soname:
+            shared.setdefault(u.soname, u)
+        else:
+            units.setdefault(u.key, u)
     units = units.values()
 
     srcs = [f for f in ctx.files.srcs if f.extension in ("c", "cc", "cpp")]
@@ -177,7 +248,13 @@ def _react_native_appmodules_impl(ctx):
         args.add_all(codegen_includes, format_each = "-I%s")
         args.add_all(include_dirs, format_each = "-I%s")
         args.add_all(srcs + unit_srcs)
-        args.add_all(codegen_dirs, map_each = _cpp_sources)
+        for u in units:
+            if not u.jni:
+                continue
+            if u.codegen_cc_dirs == None:
+                args.add_all([u.jni], map_each = _cpp_sources)
+            else:
+                args.add_all([u.jni], map_each = _codegen_sources(u.codegen_cc_dirs), allow_closure = True)
         for u in units:
             if u.tree_src_dirs:
                 args.add_all(u.trees, map_each = _tree_sources(u.tree_src_dirs), allow_closure = True)
@@ -218,6 +295,11 @@ def _react_native_appmodules_impl(ctx):
         )
         outputs.append(struct(abi = abi, file = out))
         debug_outputs.append(struct(abi = abi, file = unstripped))
+
+        for soname, u in sorted(shared.items()):
+            lib_out, lib_unstripped = _shared_library(ctx, abi, soname, u, link_libs, headers, include_dirs)
+            outputs.append(struct(abi = abi, file = lib_out))
+            debug_outputs.append(struct(abi = abi, file = lib_unstripped))
 
     return [
         DefaultInfo(files = depset([o.file for o in outputs])),

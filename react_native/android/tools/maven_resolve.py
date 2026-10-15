@@ -488,10 +488,16 @@ def build_lock(spec: dict, known_sha256: dict[str, str]) -> dict:
     for artifact in spec["artifacts"]:
         g, a, v = artifact.split(":")
         roots.append((Coord(g, a), v))
+    # Pinned and resolved together with the roots (one version of everything), but only shipped
+    # by apps whose libraries need them.
+    libraries = []
+    for artifact in spec.get("libraries", []):
+        g, a, v = artifact.split(":")
+        libraries.append((Coord(g, a), v))
     build_type = spec.get("build_type", "release")
     excludes = set(spec.get("excludes", []))
 
-    selected = resolve(roots, build_type, excludes)
+    selected = resolve(roots + libraries, build_type, excludes)
     present = {target_name(c) for c in selected}
     artifacts = {}
     for coord in sorted(selected, key=lambda c: c.key):
@@ -552,7 +558,7 @@ def main() -> int:
         action="append",
         required=True,
         metavar="SPEC=LOCKFILE",
-        help="Workspace-relative spec JSON (`artifacts`, `build_type`, `excludes`) and lockfile to write",
+        help="Workspace-relative spec JSON (`artifacts`, `libraries`, `build_type`, `excludes`) and lockfile to write",
     )
     args = parser.parse_args()
     workspace = os.environ.get("BUILD_WORKSPACE_DIRECTORY", ".")

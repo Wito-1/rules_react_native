@@ -1,4 +1,4 @@
-load("@aspect_rules_js//js:defs.bzl", "js_binary")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_library")
 
 js_binary(
     name = "bundler",
@@ -17,5 +17,13 @@ js_binary(
     name = "dev_server",
     data = ["metro_config.cjs"],
     entry_point = "dev_server.cjs",
+    visibility = ["//visibility:public"],
+)
+
+# The entry point of each app's react_native_autolink targets; js_library puts it in the output
+# tree, where rules_js needs entry points from other packages to be.
+js_library(
+    name = "autolink",
+    srcs = ["autolink.cjs"],
     visibility = ["//visibility:public"],
 )
