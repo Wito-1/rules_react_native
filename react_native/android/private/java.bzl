@@ -1,4 +1,4 @@
-"""Java compilation for React Native Android code, with a pinned JDK rather than rules_java's toolchain."""
+"""Java and Kotlin compilation for React Native Android code, with a pinned JDK rather than rules_java's toolchain."""
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
@@ -9,6 +9,7 @@ DEFAULT_JAVACOPTS = ["-source", "17", "-target", "17"]
 
 JAVA_ATTRS = {
     "javacopts": attr.string_list(doc = "Extra javac flags, after the defaults (`-source 17 -target 17`)."),
+    "kotlincopts": attr.string_list(doc = "Extra kotlinc flags, after the defaults (`-jvm-target 17`)."),
     "_android_jar": attr.label(default = "@rn_android_sdk//:android_jar_file", allow_single_file = True),
     "_javac": attr.label(default = "//react_native/android/tools:javac", executable = True, cfg = "exec"),
     "_jdk": attr.label(
@@ -16,7 +17,10 @@ JAVA_ATTRS = {
         cfg = "exec",
         providers = [java_common.JavaRuntimeInfo],
     ),
+    "_kotlin_compiler": attr.label(default = "@rn_kotlin_compiler_maven//:all", cfg = "exec"),
 }
+
+JAVA_SRC_EXTENSIONS = [".java", ".kt", ".srcjar"]
 
 def run_java_tool(ctx, main_class, classpath, arguments, inputs, jvm_flags = [], **kwargs):
     """Runs a Java tool's main class on the pinned JDK 21.
@@ -61,18 +65,28 @@ def compile_classpath(deps):
         if AndroidLibraryInfo not in d and JavaInfo in d
     ])
 
-def compile_java(ctx, out, srcs = [], srcjars = [], srcdirs = [], classpath = depset(), exclude_r = []):
+def _kotlin_module_name(label):
+    # Unique per target: every module's META-INF/<name>.kotlin_module lands in the same app.
+    return "".join([c if c.isalnum() else "_" for c in (label.package + "_" + label.name).elems()]).strip("_")
+
+def compile_java(ctx, out, srcs = [], srcjars = [], srcdirs = [], srcdir_inputs = [], classpath = depset(), exclude_r = [], kotlin = None):
     """Runs javac.py; returns nothing, `out` is the jar.
 
     Args:
         ctx: Rule context with JAVA_ATTRS.
         out: Output jar.
-        srcs: .java Files.
+        srcs: .java and .kt Files.
         srcjars: .srcjar Files.
-        srcdirs: Directories (tree artifacts) of .java files.
+        srcdirs: Directories of .java/.kt files: tree artifacts, or paths (strings) inside one of
+            `srcdir_inputs`.
+        srcdir_inputs: Tree artifacts the string `srcdirs` point into.
         classpath: depset of jars.
         exclude_r: Packages whose R classes are dropped from `out`.
+        kotlin: Whether to set up kotlinc; by default, when `srcs` has .kt files. Directories can't
+            be inspected at analysis time, so callers with `srcdirs` say so.
     """
+    if kotlin == None:
+        kotlin = any([f.extension == "kt" for f in srcs])
     runtime = ctx.attr._jdk[java_common.JavaRuntimeInfo]
     args = ctx.actions.args()
     args.use_param_file("@%s", use_always = True)
@@ -81,6 +95,13 @@ def compile_java(ctx, out, srcs = [], srcjars = [], srcdirs = [], classpath = de
     args.add_all(srcs, before_each = "--src")
     args.add_all(srcjars, before_each = "--srcjar")
     args.add_all(srcdirs, before_each = "--srcdir", expand_directories = False)
+    kotlin_jars = []
+    if kotlin:
+        kotlin_jars = ctx.files._kotlin_compiler
+        args.add("--java", runtime.java_executable_exec_path)
+        args.add_all(kotlin_jars, before_each = "--kotlinc_classpath")
+        args.add("--module_name", _kotlin_module_name(ctx.label))
+        args.add_all(ctx.attr.kotlincopts, format_each = "--kotlincopt=%s")
     args.add("--classpath", ctx.file._android_jar)
     args.add_all(classpath, before_each = "--classpath")
     # `=` form: javac flags start with "-", which argparse would take for an option.
@@ -90,11 +111,14 @@ def compile_java(ctx, out, srcs = [], srcjars = [], srcdirs = [], classpath = de
     ctx.actions.run(
         executable = ctx.executable._javac,
         arguments = [args],
-        inputs = depset(srcs + srcjars + srcdirs + [ctx.file._android_jar], transitive = [classpath]),
+        inputs = depset(
+            srcs + srcjars + [d for d in srcdirs if type(d) != "string"] + srcdir_inputs + kotlin_jars + [ctx.file._android_jar],
+            transitive = [classpath],
+        ),
         tools = runtime.files,
         outputs = [out],
-        mnemonic = "ReactNativeJavac",
-        progress_message = "Compiling Java of %{label}",
+        mnemonic = "ReactNativeKotlinc" if kotlin else "ReactNativeJavac",
+        progress_message = "Compiling %s of %%{label}" % ("Kotlin/Java" if kotlin else "Java"),
     )
 
 def _react_native_java_library_impl(ctx):
@@ -102,7 +126,7 @@ def _react_native_java_library_impl(ctx):
     compile_java(
         ctx,
         jar,
-        srcs = [f for f in ctx.files.srcs if f.extension == "java"],
+        srcs = [f for f in ctx.files.srcs if f.extension in ("java", "kt")],
         srcjars = [f for f in ctx.files.srcs if f.extension == "srcjar"],
         classpath = depset(transitive = [compile_classpath(ctx.attr.deps), compile_classpath(ctx.attr.exports)]),
     )
@@ -123,13 +147,13 @@ def _react_native_java_library_impl(ctx):
 
 react_native_java_library = rule(
     implementation = _react_native_java_library_impl,
-    doc = """Java code for a React Native Android app, compiled against android.jar with a pinned JDK 21.
+    doc = """Java and Kotlin code for a React Native Android app, compiled against android.jar with a pinned JDK 21.
 
 Unlike rules_java's java_library, it needs no `--java_runtime_version` in the consumer's .bazelrc,
 and its compile classpath is its deps' API closure (Gradle's `implementation` semantics).""",
     attrs = dict(JAVA_ATTRS, **{
         "deps": attr.label_list(providers = [[AndroidLibraryInfo], [JavaInfo]]),
         "exports": attr.label_list(providers = [[AndroidLibraryInfo], [JavaInfo]], doc = "Deps that are part of this library's API (Gradle's `api`)."),
-        "srcs": attr.label_list(allow_files = [".java", ".srcjar"]),
+        "srcs": attr.label_list(allow_files = JAVA_SRC_EXTENSIONS),
     }),
 )

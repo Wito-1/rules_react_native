@@ -9,8 +9,10 @@ Public API of the React Native ruleset. See README.md.
 <pre>
 load("@rules_react_native//react_native:defs.bzl", "react_native_android_library")
 
-react_native_android_library(<a href="#react_native_android_library-name">name</a>, <a href="#react_native_android_library-deps">deps</a>, <a href="#react_native_android_library-srcs">srcs</a>, <a href="#react_native_android_library-assets">assets</a>, <a href="#react_native_android_library-codegen">codegen</a>, <a href="#react_native_android_library-exports">exports</a>, <a href="#react_native_android_library-javacopts">javacopts</a>, <a href="#react_native_android_library-manifest">manifest</a>,
-                             <a href="#react_native_android_library-package">package</a>, <a href="#react_native_android_library-react_native">react_native</a>, <a href="#react_native_android_library-react_packages">react_packages</a>, <a href="#react_native_android_library-res">res</a>)
+react_native_android_library(<a href="#react_native_android_library-name">name</a>, <a href="#react_native_android_library-deps">deps</a>, <a href="#react_native_android_library-srcs">srcs</a>, <a href="#react_native_android_library-assets">assets</a>, <a href="#react_native_android_library-build_config">build_config</a>, <a href="#react_native_android_library-build_config_fields">build_config_fields</a>,
+                             <a href="#react_native_android_library-cc_includes">cc_includes</a>, <a href="#react_native_android_library-cc_srcs">cc_srcs</a>, <a href="#react_native_android_library-codegen">codegen</a>, <a href="#react_native_android_library-component_descriptors">component_descriptors</a>, <a href="#react_native_android_library-cxx_modules">cxx_modules</a>,
+                             <a href="#react_native_android_library-exports">exports</a>, <a href="#react_native_android_library-javacopts">javacopts</a>, <a href="#react_native_android_library-kotlincopts">kotlincopts</a>, <a href="#react_native_android_library-manifest">manifest</a>, <a href="#react_native_android_library-package">package</a>, <a href="#react_native_android_library-react_native">react_native</a>,
+                             <a href="#react_native_android_library-react_packages">react_packages</a>, <a href="#react_native_android_library-res">res</a>)
 </pre>
 
 A library of a React Native Android app: Java sources, resources, manifest entries,
@@ -28,11 +30,18 @@ its `react_packages` are added to PackageList.
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="react_native_android_library-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="react_native_android_library-deps"></a>deps |  -   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
-| <a id="react_native_android_library-srcs"></a>srcs |  -   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="react_native_android_library-srcs"></a>srcs |  Java and Kotlin sources, and srcjars.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="react_native_android_library-assets"></a>assets |  Files under one assets/ directory; packaged at the same relative paths.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="react_native_android_library-build_config"></a>build_config |  Generate `<package>.BuildConfig` (AGP's `buildFeatures.buildConfig`): `DEBUG` (false), `LIBRARY_PACKAGE_NAME`, `BUILD_TYPE`, `IS_NEW_ARCHITECTURE_ENABLED` and `IS_HERMES_ENABLED` (true).   | Boolean | optional |  `False`  |
+| <a id="react_native_android_library-build_config_fields"></a>build_config_fields |  Extra `public static final String` BuildConfig fields; implies `build_config`.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="react_native_android_library-cc_includes"></a>cc_includes |  Include roots for `cc_srcs`, relative to this package. Header directories are always included.   | List of strings | optional |  `[]`  |
+| <a id="react_native_android_library-cc_srcs"></a>cc_srcs |  C++ compiled into the app's libappmodules.so: custom shadow nodes, pure C++ TurboModules.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="react_native_android_library-codegen"></a>codegen |  `react_native_codegen` targets for this library's specs.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="react_native_android_library-component_descriptors"></a>component_descriptors |  C++ ComponentDescriptor classes to register (react-native.config.js `componentDescriptors`). When set, they replace registering the `codegen` targets' generated descriptors.   | List of strings | optional |  `[]`  |
+| <a id="react_native_android_library-cxx_modules"></a>cxx_modules |  Pure C++ TurboModules, `{class: header}`, e.g. `{"facebook::react::NativeSampleModule": "NativeSampleModule.h"}`. Registered in autolinking.cpp's cxxModuleProvider by `class::kModuleName` (from the codegen'd `<Name>CxxSpec`).   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="react_native_android_library-exports"></a>exports |  Deps that are part of this library's API (Gradle's `api`).   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="react_native_android_library-javacopts"></a>javacopts |  Extra javac flags, after the defaults (`-source 17 -target 17`).   | List of strings | optional |  `[]`  |
+| <a id="react_native_android_library-kotlincopts"></a>kotlincopts |  Extra kotlinc flags, after the defaults (`-jvm-target 17`).   | List of strings | optional |  `[]`  |
 | <a id="react_native_android_library-manifest"></a>manifest |  Optional; components, permissions and meta-data to merge into the app's manifest.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="react_native_android_library-package"></a>package |  Java package of the library's R class (AGP's `namespace`).   | String | required |  |
 | <a id="react_native_android_library-react_native"></a>react_native |  Compile and link resources against the consumer's release React Native set. It stays compile-only; the app supplies the runtime variant.   | Boolean | optional |  `True`  |
@@ -47,7 +56,7 @@ its `react_packages` are added to PackageList.
 <pre>
 load("@rules_react_native//react_native:defs.bzl", "react_native_apk_test")
 
-react_native_apk_test(<a href="#react_native_apk_test-name">name</a>, <a href="#react_native_apk_test-abis">abis</a>, <a href="#react_native_apk_test-apk">apk</a>, <a href="#react_native_apk_test-assets">assets</a>, <a href="#react_native_apk_test-native_libs">native_libs</a>, <a href="#react_native_apk_test-package">package</a>)
+react_native_apk_test(<a href="#react_native_apk_test-name">name</a>, <a href="#react_native_apk_test-abis">abis</a>, <a href="#react_native_apk_test-apk">apk</a>, <a href="#react_native_apk_test-assets">assets</a>, <a href="#react_native_apk_test-entries">entries</a>, <a href="#react_native_apk_test-native_libs">native_libs</a>, <a href="#react_native_apk_test-package">package</a>)
 </pre>
 
 Checks a built APK without a device: manifest package, 16 KiB alignment, signature, and
@@ -62,6 +71,7 @@ that every ABI ships the expected native libraries uncompressed, plus the expect
 | <a id="react_native_apk_test-abis"></a>abis |  Exactly the ABIs the APK must ship.   | List of strings | optional |  `["arm64-v8a", "x86_64"]`  |
 | <a id="react_native_apk_test-apk"></a>apk |  -   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="react_native_apk_test-assets"></a>assets |  Paths under assets/ that must exist, e.g. index.android.bundle.   | List of strings | optional |  `[]`  |
+| <a id="react_native_apk_test-entries"></a>entries |  Any other paths that must exist in the APK, e.g. res/drawable-xhdpi-v4/images_logo.png.   | List of strings | optional |  `[]`  |
 | <a id="react_native_apk_test-native_libs"></a>native_libs |  Libraries every ABI must ship.   | List of strings | optional |  `["libreactnative.so", "libappmodules.so", "libhermesvm.so", "libc++_shared.so"]`  |
 | <a id="react_native_apk_test-package"></a>package |  Expected application id.   | String | required |  |
 
@@ -73,10 +83,10 @@ that every ABI ships the expected native libraries uncompressed, plus the expect
 <pre>
 load("@rules_react_native//react_native:defs.bzl", "react_native_java_library")
 
-react_native_java_library(<a href="#react_native_java_library-name">name</a>, <a href="#react_native_java_library-deps">deps</a>, <a href="#react_native_java_library-srcs">srcs</a>, <a href="#react_native_java_library-exports">exports</a>, <a href="#react_native_java_library-javacopts">javacopts</a>)
+react_native_java_library(<a href="#react_native_java_library-name">name</a>, <a href="#react_native_java_library-deps">deps</a>, <a href="#react_native_java_library-srcs">srcs</a>, <a href="#react_native_java_library-exports">exports</a>, <a href="#react_native_java_library-javacopts">javacopts</a>, <a href="#react_native_java_library-kotlincopts">kotlincopts</a>)
 </pre>
 
-Java code for a React Native Android app, compiled against android.jar with a pinned JDK 21.
+Java and Kotlin code for a React Native Android app, compiled against android.jar with a pinned JDK 21.
 
 Unlike rules_java's java_library, it needs no `--java_runtime_version` in the consumer's .bazelrc,
 and its compile classpath is its deps' API closure (Gradle's `implementation` semantics).
@@ -91,6 +101,7 @@ and its compile classpath is its deps' API closure (Gradle's `implementation` se
 | <a id="react_native_java_library-srcs"></a>srcs |  -   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="react_native_java_library-exports"></a>exports |  Deps that are part of this library's API (Gradle's `api`).   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="react_native_java_library-javacopts"></a>javacopts |  Extra javac flags, after the defaults (`-source 17 -target 17`).   | List of strings | optional |  `[]`  |
+| <a id="react_native_java_library-kotlincopts"></a>kotlincopts |  Extra kotlinc flags, after the defaults (`-jvm-target 17`).   | List of strings | optional |  `[]`  |
 
 
 <a id="react_native_maven_pin"></a>
@@ -119,6 +130,50 @@ reused, so re-pinning only downloads what changed.
 | <a id="react_native_maven_pin-pins"></a>pins |  Spec file -> lockfile, both relative to this package.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | required |  |
 
 
+<a id="react_native_npm_library"></a>
+
+## react_native_npm_library
+
+<pre>
+load("@rules_react_native//react_native:defs.bzl", "react_native_npm_library")
+
+react_native_npm_library(<a href="#react_native_npm_library-name">name</a>, <a href="#react_native_npm_library-deps">deps</a>, <a href="#react_native_npm_library-build_config">build_config</a>, <a href="#react_native_npm_library-build_config_fields">build_config_fields</a>, <a href="#react_native_npm_library-cc_dirs">cc_dirs</a>, <a href="#react_native_npm_library-cc_includes">cc_includes</a>,
+                         <a href="#react_native_npm_library-codegen">codegen</a>, <a href="#react_native_npm_library-component_descriptors">component_descriptors</a>, <a href="#react_native_npm_library-exports">exports</a>, <a href="#react_native_npm_library-java_dirs">java_dirs</a>, <a href="#react_native_npm_library-javacopts">javacopts</a>, <a href="#react_native_npm_library-kotlincopts">kotlincopts</a>,
+                         <a href="#react_native_npm_library-manifest">manifest</a>, <a href="#react_native_npm_library-npm_package">npm_package</a>, <a href="#react_native_npm_library-package">package</a>, <a href="#react_native_npm_library-react_native">react_native</a>, <a href="#react_native_npm_library-react_packages">react_packages</a>, <a href="#react_native_npm_library-res_dir">res_dir</a>)
+</pre>
+
+The Android side of a React Native library installed from npm, built from its sources in
+node_modules: what the library's android/build.gradle and react-native.config.js tell Gradle.
+
+Java and Kotlin under `java_dirs` are compiled together; C++ under `cc_dirs` (custom shadow nodes,
+the library's own `<lib>.h`) and its `codegen` are compiled into the app's libappmodules.so and
+registered in autolinking.cpp. Directory attributes are paths inside the package.
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="react_native_npm_library-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="react_native_npm_library-deps"></a>deps |  -   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="react_native_npm_library-build_config"></a>build_config |  Generate `<package>.BuildConfig` (AGP's `buildFeatures.buildConfig`): `DEBUG` (false), `LIBRARY_PACKAGE_NAME`, `BUILD_TYPE`, `IS_NEW_ARCHITECTURE_ENABLED` and `IS_HERMES_ENABLED` (true).   | Boolean | optional |  `False`  |
+| <a id="react_native_npm_library-build_config_fields"></a>build_config_fields |  Extra `public static final String` BuildConfig fields; implies `build_config`.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="react_native_npm_library-cc_dirs"></a>cc_dirs |  Directories whose .c/.cc/.cpp files are compiled (CMakeLists.txt's sources), e.g. `["android/src/main/jni", "common/cpp/react/renderer/components/foo"]`.   | List of strings | optional |  `[]`  |
+| <a id="react_native_npm_library-cc_includes"></a>cc_includes |  Include roots (CMakeLists.txt's target_include_directories); searched before codegen output.   | List of strings | optional |  `[]`  |
+| <a id="react_native_npm_library-codegen"></a>codegen |  `react_native_codegen` targets for this library's specs.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="react_native_npm_library-component_descriptors"></a>component_descriptors |  C++ ComponentDescriptor classes to register (react-native.config.js `componentDescriptors`). When set, they replace registering the `codegen` targets' generated descriptors.   | List of strings | optional |  `[]`  |
+| <a id="react_native_npm_library-exports"></a>exports |  Deps that are part of this library's API (Gradle's `api`).   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="react_native_npm_library-java_dirs"></a>java_dirs |  Source roots of .java/.kt files: Gradle's `sourceSets.main` for the new architecture.   | List of strings | optional |  `["android/src/main/java"]`  |
+| <a id="react_native_npm_library-javacopts"></a>javacopts |  Extra javac flags, after the defaults (`-source 17 -target 17`).   | List of strings | optional |  `[]`  |
+| <a id="react_native_npm_library-kotlincopts"></a>kotlincopts |  Extra kotlinc flags, after the defaults (`-jvm-target 17`).   | List of strings | optional |  `[]`  |
+| <a id="react_native_npm_library-manifest"></a>manifest |  Library manifest; empty for none.   | String | optional |  `"android/src/main/AndroidManifest.xml"`  |
+| <a id="react_native_npm_library-npm_package"></a>npm_package |  The package's link target from `npm_link_all_packages`, e.g. `:node_modules/react-native-safe-area-context`.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="react_native_npm_library-package"></a>package |  Java package of the library's R class (AGP's `namespace`).   | String | required |  |
+| <a id="react_native_npm_library-react_native"></a>react_native |  Compile and link resources against the consumer's release React Native set. It stays compile-only; the app supplies the runtime variant.   | Boolean | optional |  `True`  |
+| <a id="react_native_npm_library-react_packages"></a>react_packages |  Fully-qualified ReactPackage classes the app's PackageList must instantiate.   | List of strings | optional |  `[]`  |
+| <a id="react_native_npm_library-res_dir"></a>res_dir |  res/ directory, if the library has resources, e.g. `android/src/main/res`.   | String | optional |  `""`  |
+
+
 <a id="react_native_android_app"></a>
 
 ## react_native_android_app
@@ -126,13 +181,14 @@ reused, so re-pinning only downloads what changed.
 <pre>
 load("@rules_react_native//react_native:defs.bzl", "react_native_android_app")
 
-react_native_android_app(<a href="#react_native_android_app-name">name</a>, <a href="#react_native_android_app-package">package</a>, <a href="#react_native_android_app-manifest">manifest</a>, <a href="#react_native_android_app-bundle">bundle</a>, <a href="#react_native_android_app-maven">maven</a>, <a href="#react_native_android_app-maven_debug">maven_debug</a>, <a href="#react_native_android_app-srcs">srcs</a>, <a href="#react_native_android_app-res">res</a>, <a href="#react_native_android_app-deps">deps</a>,
-                         <a href="#react_native_android_app-codegen">codegen</a>, <a href="#react_native_android_app-react_packages">react_packages</a>, <a href="#react_native_android_app-min_sdk">min_sdk</a>, <a href="#react_native_android_app-target_sdk">target_sdk</a>, <a href="#react_native_android_app-version_code">version_code</a>, <a href="#react_native_android_app-version_name">version_name</a>,
-                         <a href="#react_native_android_app-abis">abis</a>, <a href="#react_native_android_app-debug">debug</a>, <a href="#react_native_android_app-edge_to_edge">edge_to_edge</a>, <a href="#react_native_android_app-manifest_placeholders">manifest_placeholders</a>, <a href="#react_native_android_app-keystore">keystore</a>,
-                         <a href="#react_native_android_app-keystore_password">keystore_password</a>, <a href="#react_native_android_app-key_alias">key_alias</a>, <a href="#react_native_android_app-javacopts">javacopts</a>, <a href="#react_native_android_app-kwargs">**kwargs</a>)
+react_native_android_app(<a href="#react_native_android_app-name">name</a>, <a href="#react_native_android_app-package">package</a>, <a href="#react_native_android_app-manifest">manifest</a>, <a href="#react_native_android_app-application_id">application_id</a>, <a href="#react_native_android_app-build_config_fields">build_config_fields</a>, <a href="#react_native_android_app-bundle">bundle</a>,
+                         <a href="#react_native_android_app-maven">maven</a>, <a href="#react_native_android_app-maven_debug">maven_debug</a>, <a href="#react_native_android_app-srcs">srcs</a>, <a href="#react_native_android_app-res">res</a>, <a href="#react_native_android_app-assets">assets</a>, <a href="#react_native_android_app-deps">deps</a>, <a href="#react_native_android_app-codegen">codegen</a>, <a href="#react_native_android_app-react_packages">react_packages</a>,
+                         <a href="#react_native_android_app-min_sdk">min_sdk</a>, <a href="#react_native_android_app-target_sdk">target_sdk</a>, <a href="#react_native_android_app-version_code">version_code</a>, <a href="#react_native_android_app-version_name">version_name</a>, <a href="#react_native_android_app-abis">abis</a>, <a href="#react_native_android_app-debug">debug</a>, <a href="#react_native_android_app-edge_to_edge">edge_to_edge</a>,
+                         <a href="#react_native_android_app-manifest_placeholders">manifest_placeholders</a>, <a href="#react_native_android_app-adb_reverse">adb_reverse</a>, <a href="#react_native_android_app-keystore">keystore</a>, <a href="#react_native_android_app-keystore_password">keystore_password</a>, <a href="#react_native_android_app-key_alias">key_alias</a>,
+                         <a href="#react_native_android_app-javacopts">javacopts</a>, <a href="#react_native_android_app-kotlincopts">kotlincopts</a>, <a href="#react_native_android_app-kwargs">**kwargs</a>)
 </pre>
 
-Builds a signed React Native APK `<name>.apk` from Java sources and a `react_native_bundle`.
+Builds a signed React Native APK `<name>.apk` from Java or Kotlin sources and a `react_native_bundle`.
 
 Also defines `<name>.install` (`bazel run` installs and launches the APK on a device) and
 `<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`).
@@ -149,14 +205,17 @@ ReactNativeApplicationEntryPoint) are generated here.
 | Name  | Description | Default Value |
 | :------------- | :------------- | :------------- |
 | <a id="react_native_android_app-name"></a>name |  Target name; the APK is `<name>.apk`.   |  none |
-| <a id="react_native_android_app-package"></a>package |  Application id and Java package of BuildConfig/R, e.g. "com.example.hello".   |  none |
+| <a id="react_native_android_app-package"></a>package |  Java package of BuildConfig and R, and the base for relative class names in the manifest (Gradle's `namespace`), e.g. "com.example.hello". Also the application id unless `application_id` is set.   |  none |
 | <a id="react_native_android_app-manifest"></a>manifest |  The app's AndroidManifest.xml. It needs no `package` attribute.   |  none |
+| <a id="react_native_android_app-application_id"></a>application_id |  The installed app's id when it differs from `package`, e.g. a staging variant's "com.example.hello.staging" that installs next to the release.   |  `None` |
+| <a id="react_native_android_app-build_config_fields"></a>build_config_fields |  Extra `public static final String` fields of BuildConfig, like Gradle's `buildConfigField`.   |  `{}` |
 | <a id="react_native_android_app-bundle"></a>bundle |  A `react_native_bundle` target for platform "android", embedded as assets/index.android.bundle. Required for release builds. Optional with `debug`, where the app loads JS from Metro (`react_native_dev_server`) and an embedded bundle is only the fallback when Metro isn't reachable.   |  `None` |
 | <a id="react_native_android_app-maven"></a>maven |  The release Maven artifact set, a `react_native.maven` repository's `:all` target. Defaults to the set whose lockfile has `"build_type": "release"`.   |  `None` |
 | <a id="react_native_android_app-maven_debug"></a>maven_debug |  The set with react-android/hermes-android's debug variants, used when `debug = True`. Defaults to the lockfile with `"build_type": "debug"`.   |  `None` |
-| <a id="react_native_android_app-srcs"></a>srcs |  Java sources, typically MainApplication and MainActivity.   |  `[]` |
+| <a id="react_native_android_app-srcs"></a>srcs |  Java or Kotlin sources, typically MainApplication and MainActivity.   |  `[]` |
 | <a id="react_native_android_app-res"></a>res |  Files under one `res/` directory.   |  `[]` |
-| <a id="react_native_android_app-deps"></a>deps |  `react_native_android_library`, `react_native_java_library`, Maven artifacts (`@rn_maven//:<group>_<artifact>`) or plain `java_library` targets.   |  `[]` |
+| <a id="react_native_android_app-assets"></a>assets |  Files under one `assets/` directory, packaged at the same relative paths. Custom fonts go in `assets/fonts/<fontFamily>.ttf`, where React Native's font manager looks.   |  `[]` |
+| <a id="react_native_android_app-deps"></a>deps |  `react_native_android_library`, `react_native_npm_library`, `react_native_java_library`, Maven artifacts (`@rn_maven//:<group>_<artifact>`) or plain `java_library` targets.   |  `[]` |
 | <a id="react_native_android_app-codegen"></a>codegen |  `react_native_codegen` targets. Their Java specs are compiled with `srcs`, their C++ is linked into libappmodules.so and registered in the generated autolinking.cpp.   |  `[]` |
 | <a id="react_native_android_app-react_packages"></a>react_packages |  Fully-qualified ReactPackage classes to register in PackageList, besides those `deps` declare.   |  `[]` |
 | <a id="react_native_android_app-min_sdk"></a>min_sdk |  minSdkVersion.   |  `24` |
@@ -167,10 +226,12 @@ ReactNativeApplicationEntryPoint) are generated here.
 | <a id="react_native_android_app-debug"></a>debug |  Builds against react-android/hermes-android's debug variants and sets BuildConfig.DEBUG, which turns on developer support: loading JS from Metro with Fast Refresh, the dev menu, and the Hermes debugger. `<name>.install` also runs `adb reverse tcp:8081 tcp:8081` so the device reaches Metro on localhost.   |  `False` |
 | <a id="react_native_android_app-edge_to_edge"></a>edge_to_edge |  Sets BuildConfig.IS_EDGE_TO_EDGE_ENABLED.   |  `False` |
 | <a id="react_native_android_app-manifest_placeholders"></a>manifest_placeholders |  Extra `${...}` substitutions for the manifest merger. `applicationId` and `usesCleartextTraffic` (true in debug) are always set.   |  `{}` |
+| <a id="react_native_android_app-adb_reverse"></a>adb_reverse |  Host ports `<name>.install` exposes on the device's localhost (`adb reverse`), e.g. a development backend's.   |  `[]` |
 | <a id="react_native_android_app-keystore"></a>keystore |  Keystore for the in-build signature. Defaults to a public debug key; never ship that to a store. Sign release builds with `<name>.sign` instead, so the key and its password stay out of the build.   |  `Label("@rules_react_native//react_native/android:debug.keystore")` |
 | <a id="react_native_android_app-keystore_password"></a>keystore_password |  Password of `keystore` and of its key. It's an action argument, so only for keys that aren't secret.   |  `"android"` |
 | <a id="react_native_android_app-key_alias"></a>key_alias |  Alias of the signing key in `keystore`.   |  `"androiddebugkey"` |
 | <a id="react_native_android_app-javacopts"></a>javacopts |  Extra javac flags for `srcs`.   |  `[]` |
+| <a id="react_native_android_app-kotlincopts"></a>kotlincopts |  Extra kotlinc flags for Kotlin `srcs`.   |  `[]` |
 | <a id="react_native_android_app-kwargs"></a>kwargs |  Common attributes (tags, visibility, ...) applied to every generated target.   |  none |
 
 
@@ -212,7 +273,8 @@ output group `assets` is the directory of image assets Metro wrote (Android `dra
 <pre>
 load("@rules_react_native//react_native:defs.bzl", "react_native_codegen")
 
-react_native_codegen(<a href="#react_native_codegen-name">name</a>, <a href="#react_native_codegen-srcs">srcs</a>, <a href="#react_native_codegen-node_modules">node_modules</a>, <a href="#react_native_codegen-library_name">library_name</a>, <a href="#react_native_codegen-java_package">java_package</a>, <a href="#react_native_codegen-js_srcs_dir">js_srcs_dir</a>, <a href="#react_native_codegen-kwargs">**kwargs</a>)
+react_native_codegen(<a href="#react_native_codegen-name">name</a>, <a href="#react_native_codegen-node_modules">node_modules</a>, <a href="#react_native_codegen-library_name">library_name</a>, <a href="#react_native_codegen-java_package">java_package</a>, <a href="#react_native_codegen-js_srcs_dir">js_srcs_dir</a>, <a href="#react_native_codegen-srcs">srcs</a>, <a href="#react_native_codegen-npm_package">npm_package</a>,
+                     <a href="#react_native_codegen-kwargs">**kwargs</a>)
 </pre>
 
 Generates TurboModule and Fabric component glue from specs, as `codegenConfig` does in Gradle.
@@ -222,6 +284,10 @@ The default output is a srcjar of the Java spec classes (`Native<Module>Spec`,
 `react_native_android_app(codegen = ...)` as well, which compiles the C++ into
 libappmodules.so and registers it in the generated autolinking.cpp.
 
+For a library installed from npm, pass `npm_package` instead of `srcs`: the specs are read from
+the installed package, and `js_srcs_dir` is relative to it. Pass the target to
+`react_native_npm_library(codegen = ...)`.
+
 
 **PARAMETERS**
 
@@ -229,11 +295,12 @@ libappmodules.so and registers it in the generated autolinking.cpp.
 | Name  | Description | Default Value |
 | :------------- | :------------- | :------------- |
 | <a id="react_native_codegen-name"></a>name |  Target name.   |  none |
-| <a id="react_native_codegen-srcs"></a>srcs |  The spec files (`Native*.ts`, `*NativeComponent.ts`) and package.json.   |  none |
 | <a id="react_native_codegen-node_modules"></a>node_modules |  The package's `npm_link_all_packages` target.   |  none |
 | <a id="react_native_codegen-library_name"></a>library_name |  `codegenConfig.name`, e.g. "AppSpecs".   |  none |
 | <a id="react_native_codegen-java_package"></a>java_package |  `codegenConfig.android.javaPackageName`.   |  none |
-| <a id="react_native_codegen-js_srcs_dir"></a>js_srcs_dir |  `codegenConfig.jsSrcsDir`, relative to this package.   |  none |
+| <a id="react_native_codegen-js_srcs_dir"></a>js_srcs_dir |  `codegenConfig.jsSrcsDir`, relative to this package (or to `npm_package`).   |  none |
+| <a id="react_native_codegen-srcs"></a>srcs |  The spec files (`Native*.ts`, `*NativeComponent.ts`) and package.json.   |  `[]` |
+| <a id="react_native_codegen-npm_package"></a>npm_package |  Name of an installed npm package whose specs to generate from, e.g. "react-native-safe-area-context".   |  `None` |
 | <a id="react_native_codegen-kwargs"></a>kwargs |  Common attributes.   |  none |
 
 

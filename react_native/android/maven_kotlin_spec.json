@@ -1,0 +1,7 @@
+{
+  "artifacts": [
+    "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.10"
+  ],
+  "build_type": "release",
+  "excludes": []
+}

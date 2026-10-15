@@ -5,7 +5,7 @@ load("//react_native/android/private:android_app.bzl", "android_apk", "android_a
 load("//react_native/android/private:apk_test.bzl", _react_native_apk_test = "react_native_apk_test")
 load("//react_native/android/private:appmodules.bzl", "react_native_appmodules")
 load("//react_native/android/private:java.bzl", _react_native_java_library = "react_native_java_library")
-load("//react_native/android/private:library.bzl", _react_native_android_library = "react_native_android_library")
+load("//react_native/android/private:library.bzl", _react_native_android_library = "react_native_android_library", _react_native_npm_library = "react_native_npm_library")
 load("//react_native/android/private:pin.bzl", _react_native_maven_pin = "react_native_maven_pin")
 load("//react_native/js/private:bundle.bzl", _react_native_bundle = "react_native_bundle")
 load("//react_native/js/private:codegen.bzl", _react_native_codegen = "react_native_codegen")
@@ -18,6 +18,7 @@ react_native_codegen = _react_native_codegen
 react_native_dev_server = _react_native_dev_server
 react_native_java_library = _react_native_java_library
 react_native_maven_pin = _react_native_maven_pin
+react_native_npm_library = _react_native_npm_library
 
 # Aliases the extension points at the consumer's release/debug `react_native.maven` sets.
 _DEFAULT_MAVEN = Label("@rn_maven_default//:all")
@@ -51,8 +52,9 @@ def react_native_android_app(
         keystore_password = "android",
         key_alias = "androiddebugkey",
         javacopts = [],
+        kotlincopts = [],
         **kwargs):
-    """Builds a signed React Native APK `<name>.apk` from Java sources and a `react_native_bundle`.
+    """Builds a signed React Native APK `<name>.apk` from Java or Kotlin sources and a `react_native_bundle`.
 
     Also defines `<name>.install` (`bazel run` installs and launches the APK on a device) and
     `<name>.sign` (`bazel run` signs it with a release key passed at run time; see `android_sign`).
@@ -80,11 +82,11 @@ def react_native_android_app(
             Defaults to the set whose lockfile has `"build_type": "release"`.
         maven_debug: The set with react-android/hermes-android's debug variants, used when
             `debug = True`. Defaults to the lockfile with `"build_type": "debug"`.
-        srcs: Java sources, typically MainApplication and MainActivity.
+        srcs: Java or Kotlin sources, typically MainApplication and MainActivity.
         res: Files under one `res/` directory.
         assets: Files under one `assets/` directory, packaged at the same relative paths. Custom
             fonts go in `assets/fonts/<fontFamily>.ttf`, where React Native's font manager looks.
-        deps: `react_native_android_library`, `react_native_java_library`, Maven artifacts
+        deps: `react_native_android_library`, `react_native_npm_library`, `react_native_java_library`, Maven artifacts
             (`@rn_maven//:<group>_<artifact>`) or plain `java_library` targets.
         codegen: `react_native_codegen` targets. Their Java specs are compiled with `srcs`, their
             C++ is linked into libappmodules.so and registered in the generated autolinking.cpp.
@@ -111,6 +113,7 @@ def react_native_android_app(
             for keys that aren't secret.
         key_alias: Alias of the signing key in `keystore`.
         javacopts: Extra javac flags for `srcs`.
+        kotlincopts: Extra kotlinc flags for Kotlin `srcs`.
         **kwargs: Common attributes (tags, visibility, ...) applied to every generated target.
     """
     # `|` rather than update() so `manifest_placeholders` can be a select().
@@ -158,6 +161,7 @@ def react_native_android_app(
         srcs = srcs + [name + "_resources"] + codegen,
         deps = deps + [rn_maven],
         javacopts = javacopts,
+        kotlincopts = kotlincopts,
         **kwargs
     )
     react_native_appmodules(

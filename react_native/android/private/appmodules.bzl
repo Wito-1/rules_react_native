@@ -1,7 +1,7 @@
 """Compiles the app's libappmodules.so, which registers React Native's TurboModule providers."""
 
 load("//react_native/js/private:codegen.bzl", "ReactNativeCodegenInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "merge_android_infos")
+load(":aar.bzl", "AndroidLibraryInfo", "appmodules_unit", "collect_android_infos", "merge_android_infos")
 
 _ABI_TARGETS = {
     "arm64-v8a": "aarch64-linux-android",
@@ -11,8 +11,10 @@ _ABI_TARGETS = {
 }
 
 # react-native's folly-flags.cmake and react-native-flags.cmake, which ReactNative-application.cmake
-# applies to the app library.
+# applies to the app library, plus what the NDK's CMake toolchain file adds: libraries guard their
+# Android-only code (folly::dynamic state, MapBuffer) with `ANDROID`, not clang's `__ANDROID__`.
 _COPTS = [
+    "-DANDROID",
     "-std=c++20",
     "-fexceptions",
     "-frtti",
@@ -41,10 +43,10 @@ _RELEASE_COPTS = ["-DNDEBUG"]
 # so the app links the exact copy it ships.
 _LINK_LIBS = ["libreactnative.so", "libjsi.so", "libfbjni.so", "libc++_shared.so"]
 
-# What @react-native/gradle-plugin's GenerateAutolinkingNewArchitecturesFileTask emits, with one
-# entry per codegen library. The plugin lists component descriptors one by one from each library's
-# react-native.config.js; calling the codegen'd <lib>_registerComponentDescriptorsFromCodegen
-# registers the same set.
+# What @react-native/gradle-plugin's GenerateAutolinkingNewArchitecturesFileTask emits. The plugin
+# lists component descriptors from each library's react-native.config.js; for libraries that don't
+# list them, calling the codegen'd <lib>_registerComponentDescriptorsFromCodegen registers the same
+# set.
 _AUTOLINKING_CPP = """\
 #include "autolinking.h"
 {includes}
@@ -58,6 +60,7 @@ std::shared_ptr<TurboModule> autolinking_ModuleProvider(const std::string module
 }}
 
 std::shared_ptr<TurboModule> autolinking_cxxModuleProvider(const std::string moduleName, const std::shared_ptr<CallInvoker>& jsInvoker) {{
+{cxx_module_providers}
   return nullptr;
 }}
 
@@ -69,47 +72,80 @@ void autolinking_registerProviders(std::shared_ptr<ComponentDescriptorProviderRe
 }} // namespace facebook
 """
 
-def _autolinking_cpp(ctx, libraries):
+def _autolinking_cpp(ctx, units):
+    includes = []
+    module_providers = []
+    cxx_module_providers = []
+    component_registrations = []
+    for u in units:
+        lib = u.codegen_library
+        if lib:
+            includes.append("#include <{0}.h>\n#include <react/renderer/components/{0}/ComponentDescriptors.h>".format(lib))
+            module_providers.append("  if (auto module = {0}_ModuleProvider(moduleName, params)) {{\n    return module;\n  }}".format(lib))
+            if u.register_codegen_components:
+                component_registrations.append("  {}_registerComponentDescriptorsFromCodegen(providerRegistry);".format(lib))
+        for d in u.component_descriptors:
+            component_registrations.append("  providerRegistry->add(concreteComponentDescriptorProvider<{}>());".format(d))
+        for m in u.cxx_modules:
+            includes.append("#include <{}>".format(m.header))
+            cxx_module_providers.append("  if (moduleName == {0}::kModuleName) {{\n    return std::make_shared<{0}>(jsInvoker);\n  }}".format(m.cls))
     out = ctx.actions.declare_file(ctx.label.name + "/autolinking.cpp")
     ctx.actions.write(out, _AUTOLINKING_CPP.format(
-        includes = "\n".join([
-            "#include <{0}.h>\n#include <react/renderer/components/{0}/ComponentDescriptors.h>".format(lib)
-            for lib in libraries
-        ]),
-        module_providers = "\n".join([
-            "  if (auto module = {0}_ModuleProvider(moduleName, params)) {{\n    return module;\n  }}".format(lib)
-            for lib in libraries
-        ]),
-        component_registrations = "\n".join([
-            "  {}_registerComponentDescriptorsFromCodegen(providerRegistry);".format(lib)
-            for lib in libraries
-        ]),
+        includes = "\n".join(includes),
+        module_providers = "\n".join(module_providers),
+        cxx_module_providers = "\n".join(cxx_module_providers),
+        component_registrations = "\n".join(component_registrations),
     ))
     return out
 
 def _cpp_sources(f):
-    return f.path if f.extension == "cpp" else None
+    return f.path if f.extension in ("c", "cc", "cpp") else None
+
+def _tree_sources(dirs):
+    prefixes = [d.rstrip("/") + "/" for d in dirs]
+
+    def map_each(f):
+        if f.extension not in ("c", "cc", "cpp"):
+            return None
+        for prefix in prefixes:
+            if f.path.startswith(prefix):
+                return f.path
+        return None
+
+    return map_each
 
 def _react_native_appmodules_impl(ctx):
     infos = collect_android_infos(ctx.attr.deps)
     native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
     headers = depset(transitive = [i.cc_headers for i in infos])
     include_dirs = depset(transitive = [i.cc_include_dirs for i in infos]).to_list()
-    # The app's own codegen plus every library's; one entry per library name (diamonds).
-    codegen = {}
-    for c in [c[ReactNativeCodegenInfo] for c in ctx.attr.codegen] + depset(transitive = [i.codegen for i in infos]).to_list():
-        codegen.setdefault(c.library_name, c)
-    codegen = codegen.values()
+
+    # The app's own codegen plus every library's units; one per key (diamonds).
+    units = {}
+    for c in ctx.attr.codegen:
+        info = c[ReactNativeCodegenInfo]
+        units.setdefault(info.library_name, appmodules_unit(key = info.library_name, codegen = info))
+    for u in depset(transitive = [i.appmodules for i in infos]).to_list():
+        units.setdefault(u.key, u)
+    units = units.values()
+
     srcs = [f for f in ctx.files.srcs if f.extension in ("c", "cc", "cpp")]
-    srcs.append(_autolinking_cpp(ctx, [c.library_name for c in codegen]))
+    srcs.append(_autolinking_cpp(ctx, units))
     hdrs = [f for f in ctx.files.srcs if f.extension in ("h", "hpp")]
     local_includes = {f.dirname: True for f in hdrs}.keys()
-    codegen_dirs = [c.jni for c in codegen]
+    codegen_dirs = [u.jni for u in units if u.jni]
+    unit_srcs, unit_hdrs, unit_trees, unit_includes = [], [], [], []
+    for u in units:
+        unit_srcs.extend(u.srcs)
+        unit_hdrs.extend(u.hdrs)
+        unit_trees.extend(u.trees)
+        unit_includes.extend(u.includes)
     codegen_includes = []
-    for c in codegen:
-        # Same include roots as the CMakeLists.txt codegen writes next to the sources.
-        codegen_includes.append(c.jni.path)
-        codegen_includes.append("%s/react/renderer/components/%s" % (c.jni.path, c.library_name))
+    for u in units:
+        if u.jni:
+            # Same include roots as the CMakeLists.txt codegen writes next to the sources.
+            codegen_includes.append(u.jni.path)
+            codegen_includes.append("%s/react/renderer/components/%s" % (u.jni.path, u.codegen_library))
 
     outputs = []
     for abi in ctx.attr.abis:
@@ -132,10 +168,17 @@ def _react_native_appmodules_impl(ctx):
             args.add_all(_RELEASE_COPTS)
         args.add_all(ctx.attr.copts)
         args.add_all(local_includes, format_each = "-I%s")
+
+        # Libraries' own headers win over codegen's: a library's hand-written <lib>.h (declaring
+        # its custom descriptors) shadows the generated one, as its CMakeLists.txt arranges.
+        args.add_all(unit_includes, format_each = "-I%s", uniquify = True)
         args.add_all(codegen_includes, format_each = "-I%s")
         args.add_all(include_dirs, format_each = "-I%s")
-        args.add_all(srcs)
+        args.add_all(srcs + unit_srcs)
         args.add_all(codegen_dirs, map_each = _cpp_sources)
+        for u in units:
+            if u.tree_src_dirs:
+                args.add_all(u.trees, map_each = _tree_sources(u.tree_src_dirs), allow_closure = True)
         args.add("-nostdlib++")
         args.add_all([link_libs[l] for l in _LINK_LIBS])
         args.add_all([
@@ -152,7 +195,10 @@ def _react_native_appmodules_impl(ctx):
         ctx.actions.run(
             executable = ctx.file._clang,
             arguments = [args],
-            inputs = depset(srcs + hdrs + codegen_dirs + link_libs.values(), transitive = [headers]),
+            inputs = depset(
+                srcs + hdrs + unit_srcs + unit_hdrs + unit_trees + codegen_dirs + link_libs.values(),
+                transitive = [headers],
+            ),
             tools = ctx.files._toolchain_files,
             outputs = [out],
             mnemonic = "ReactNativeAppModules",

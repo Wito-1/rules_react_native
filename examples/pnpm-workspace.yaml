@@ -1,6 +1,8 @@
 packages:
   - "hello"
+  - "cxx_module"
   - "native_modules"
+  - "third_party"
   - "variants"
   - "assets"
   - "brownfield"

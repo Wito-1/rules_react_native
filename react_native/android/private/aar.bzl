@@ -14,9 +14,56 @@ AndroidLibraryInfo = provider(
         "compile_jars": "depset[File]: the library's jars plus its API closure, i.e. what a dependent compiles against (Gradle's compileClasspath)",
         "runtime_jars": "depset[File]: every jar the library needs at run time, to be dexed into the app",
         "react_packages": "depset[str]: ReactPackage classes the app's PackageList must instantiate",
-        "codegen": "depset[struct(library_name, jni)]: codegen'd C++ to link into libappmodules.so",
+        "appmodules": "depset[struct]: C++ to compile into libappmodules.so and register in autolinking.cpp; see `appmodules_unit`",
     },
 )
+
+def appmodules_unit(
+        key,
+        codegen = None,
+        register_codegen_components = True,
+        srcs = [],
+        hdrs = [],
+        trees = [],
+        tree_src_dirs = [],
+        includes = [],
+        component_descriptors = [],
+        cxx_modules = {}):
+    """What one library contributes to libappmodules.so.
+
+    Args:
+        key: Deduplicates units reached through several paths (diamonds).
+        codegen: ReactNativeCodegenInfo, or None. Its C++ is compiled in and its
+            `<library>_ModuleProvider` registered.
+        register_codegen_components: Register the codegen'd component descriptors with
+            `<library>_registerComponentDescriptorsFromCodegen`. Libraries whose components have
+            hand-written descriptors (codegen `interfaceOnly`) list them in `component_descriptors`
+            instead, as react-native.config.js does.
+        srcs: C/C++ source Files.
+        hdrs: Header Files.
+        trees: Tree artifacts (e.g. an npm package) that `tree_src_dirs` and `includes` point into.
+        tree_src_dirs: Exec paths of directories inside `trees` whose sources are compiled.
+        includes: Exec paths of include roots; searched before codegen output.
+        component_descriptors: C++ ComponentDescriptor classes to register.
+        cxx_modules: Pure C++ TurboModules, `{class: header}`: `class::kModuleName` maps to
+            `std::make_shared<class>(jsInvoker)`.
+
+    Returns:
+        struct, safe to put in a depset.
+    """
+    return struct(
+        key = key,
+        codegen_library = codegen.library_name if codegen else None,
+        jni = codegen.jni if codegen else None,
+        register_codegen_components = register_codegen_components,
+        srcs = tuple(srcs),
+        hdrs = tuple(hdrs),
+        trees = tuple(trees),
+        tree_src_dirs = tuple(tree_src_dirs),
+        includes = tuple(includes),
+        component_descriptors = tuple(component_descriptors),
+        cxx_modules = tuple([struct(cls = c, header = h) for c, h in sorted(cxx_modules.items())]),
+    )
 
 def collect_android_infos(deps):
     return [d[AndroidLibraryInfo] for d in deps if AndroidLibraryInfo in d]
@@ -31,7 +78,7 @@ def merge_android_infos(
         cc_include_dirs = [],
         jars = [],
         react_packages = [],
-        codegen = []):
+        appmodules = []):
     """Builds an AndroidLibraryInfo from a target's own parts and its deps/exports.
 
     Args:
@@ -44,7 +91,7 @@ def merge_android_infos(
         cc_include_dirs: Include roots of `cc_headers`.
         jars: This target's own jars.
         react_packages: This target's own ReactPackage class names.
-        codegen: This target's own codegen structs.
+        appmodules: This target's own `appmodules_unit`s.
 
     Returns:
         AndroidLibraryInfo.
@@ -70,7 +117,7 @@ def merge_android_infos(
             transitive = [i.runtime_jars for i in infos] + [j.transitive_runtime_jars for j in java_only],
         ),
         react_packages = depset(react_packages, transitive = [i.react_packages for i in infos]),
-        codegen = depset(codegen, transitive = [i.codegen for i in infos]),
+        appmodules = depset(appmodules, transitive = [i.appmodules for i in infos]),
     )
 
 def _dirname(path):

@@ -13,6 +13,7 @@ const { parseArgs } = require("node:util");
 const { values: args } = parseArgs({
   options: {
     "project-root": { type: "string" },
+    "npm-package": { type: "string" },
     "js-srcs-dir": { type: "string" },
     "library-name": { type: "string" },
     "java-package": { type: "string" },
@@ -34,7 +35,18 @@ function runNode(script, scriptArgs) {
   }
 }
 
-const projectRoot = path.resolve(args["project-root"]);
+const consumerRoot = path.resolve(args["project-root"]);
+// An installed library's specs: generate from its directory in the package store, from where its
+// own react-native (a peer) resolves.
+const projectRoot = args["npm-package"]
+  ? fs.realpathSync(
+      path.dirname(
+        createRequire(path.join(consumerRoot, "package.json")).resolve(
+          `${args["npm-package"]}/package.json`,
+        ),
+      ),
+    )
+  : consumerRoot;
 const appRequire = createRequire(path.join(projectRoot, "package.json"));
 const rnDir = path.dirname(appRequire.resolve("react-native/package.json"));
 const rnRequire = createRequire(path.join(rnDir, "package.json"));

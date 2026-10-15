@@ -19,14 +19,14 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
 ## Public API
 
 - [`react_native/defs.bzl`](react_native/defs.bzl): `react_native_android_app` (+ `.install`,
-  `.sign`), `react_native_android_library`, `react_native_java_library`, `react_native_bundle`,
-  `react_native_codegen`, `react_native_dev_server`, `react_native_apk_test`,
+  `.sign`), `react_native_android_library`, `react_native_npm_library`, `react_native_java_library`,
+  `react_native_bundle`, `react_native_codegen`, `react_native_dev_server`, `react_native_apk_test`,
   `react_native_maven_pin`. Generated reference: [`docs/defs.md`](docs/defs.md).
 - [`react_native/extensions.bzl`](react_native/extensions.bzl): the `react_native` extension. Tags:
   `maven(name, lock_file)` (consumer artifact sets; the lockfile's `build_type` makes it the default
   release or debug set) and `android_toolchain(...)` (root-only SDK/NDK override). It always creates
-  the ruleset's `@rn_android_sdk`, `@rn_android_ndk`, `@rn_android_tools_maven`, `@rn_profile` and
-  `@rn_maven_default{,_debug}`; the rules reach those through `Label()`, never consumers.
+  the ruleset's `@rn_android_sdk`, `@rn_android_ndk`, `@rn_android_tools_maven`,
+  `@rn_kotlin_compiler_maven`, `@rn_profile` and `@rn_maven_default{,_debug}`; the rules reach those through `Label()`, never consumers.
 
 ## Gotchas
 
@@ -42,6 +42,23 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   (d8, apksigner, AGP's manifest merger) on `@rules_java//toolchains:remotejdk_21` directly. That's
   what lets consumers skip `--java_runtime_version`, and the tools need class file version 61+.
   Don't switch to `java_library`/`java_binary`.
+- **Kotlin is the same path**: `javac.py` runs kotlinc (`@rn_kotlin_compiler_maven`, pinned by
+  `pin_tools`) on that JDK first, with `-no-jdk -no-stdlib` (android.jar and react-android's stdlib
+  come from the classpath), then javac against its classes. Each target's Kotlin module name is
+  derived from its label, because every `META-INF/*.kotlin_module` lands in one app. rules_kotlin
+  was considered and rejected; see the README's Kotlin section.
+- **npm packages are tree artifacts.** rules_js extracts a package in an action, so
+  `react_native_npm_library` finds the package's store directory among the link target's files and
+  addresses everything inside it by path (`--srcdir` for javac.py, `args.add_all(map_each = ...,
+  allow_closure = True)` for C++ sources). Never try to glob or label files inside it.
+- **libappmodules.so is built from `appmodules_unit`s** (`aar.bzl`): one per codegen library plus
+  one per library with C++, deduplicated by key. A unit's own includes come before codegen's, so a
+  library's hand-written `<lib>.h` shadows the generated one. `component_descriptors` replaces
+  `<lib>_registerComponentDescriptorsFromCodegen` (codegen `interfaceOnly` components have no
+  generated descriptor); `cxx_modules` fills `cxxModuleProvider`.
+- **`-DANDROID`** is in the appmodules copts because the NDK's CMake toolchain defines it and
+  libraries guard Android-only code (folly::dynamic state, MapBuffer) with it rather than
+  `__ANDROID__`. Without it, react-native-safe-area-context's state lacks `getDynamic`.
 - **Compile classpath = API closure.** Lockfiles (format 2) record `api_deps`; `android_maven_import`
   turns them into `exports`, and `AndroidLibraryInfo.compile_jars` follows only exports.
   `runtime_jars` carries everything to d8. Lockfiles without `api_deps` are treated as all-API.
@@ -78,10 +95,10 @@ publish-to-bcr templates.
 | Path | Contents |
 | --- | --- |
 | [`react_native/`](react_native) | `defs.bzl`, `extensions.bzl`, `bzl_library` targets |
-| [`react_native/android/`](react_native/android) | Tools lockfile/spec and the public debug keystore |
-| [`react_native/android/private/`](react_native/android/private) | Repository rules, providers, app/library/java/appmodules/apk-test/sign/pin rules, versions |
+| [`react_native/android/`](react_native/android) | Tools and kotlinc lockfiles/specs and the public debug keystore |
+| [`react_native/android/private/`](react_native/android/private) | Repository rules, providers, app/library/npm-library/java/appmodules/apk-test/sign/pin rules, versions |
 | [`react_native/android/native/`](react_native/android/native) | `OnLoad.cpp` and `autolinking.h` |
 | [`react_native/android/tools/`](react_native/android/tools) | Python tools (`maven_resolve`, `gen_r`, `build_apk`, `javac`, `own_r_txt`, `apk_check`) and their unittest tests |
 | [`react_native/js/`](react_native/js) | `bundle.cjs`, `dev_server.cjs`, `codegen.cjs`, the shared `metro_config.cjs`, and their rules |
 | [`docs/`](docs) | Stardoc-generated API reference (`bazel run //docs:update`) |
-| [`examples/`](examples) | Consumer module: `hello`, `native_modules` (+ `greeting` library), Maven specs/lockfiles, `:pin` |
+| [`examples/`](examples) | Consumer module: `hello`, `native_modules`, `cxx_module`, `third_party`, `assets`, `fleet`, `brownfield`, `variants`, `connect` (the README's Examples table), Maven specs/lockfiles, `:pin` |

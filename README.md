@@ -2,9 +2,10 @@
 
 Bazel rules that build React Native apps without Gradle, CocoaPods or a local Android SDK.
 
-Android is supported: release and debug APKs, Metro with Fast Refresh, codegen'd TurboModules and
-Fabric components, first-party Android libraries, device-free APK tests, and release signing that
-keeps keys out of the build. iOS currently stops at the JS bundle (see [iOS](#ios)).
+Android is supported: release and debug APKs, Java and Kotlin, Metro with Fast Refresh, codegen'd
+TurboModules and Fabric components, pure C++ TurboModules, first-party Android libraries, native
+libraries installed from npm, device-free APK tests, and release signing that keeps keys out of the
+build. iOS currently stops at the JS bundle (see [iOS](#ios)).
 
 | | |
 | --- | --- |
@@ -121,9 +122,10 @@ Everything loads from `@rules_react_native//react_native:defs.bzl`; the generate
 
 | Rule | What it does |
 | --- | --- |
-| `react_native_android_app` | `<name>.apk` from Java sources and a bundle, plus `<name>.install` and `<name>.sign` |
-| `react_native_android_library` | Java, resources, manifest entries, assets, codegen and ReactPackages that an app picks up through `deps` |
-| `react_native_java_library` | Plain Java for an app, on the same compiler and classpath rules |
+| `react_native_android_app` | `<name>.apk` from Java/Kotlin sources and a bundle, plus `<name>.install` and `<name>.sign` |
+| `react_native_android_library` | Java/Kotlin, resources, manifest entries, assets, codegen, C++ and ReactPackages that an app picks up through `deps` |
+| `react_native_npm_library` | The same, built from an npm package's `android/` and C++ sources in `node_modules` |
+| `react_native_java_library` | Plain Java/Kotlin for an app, on the same compiler and classpath rules |
 | `react_native_bundle` | Metro + Hermes bytecode, for `android` or `ios` |
 | `react_native_codegen` | `codegenConfig`: TurboModule/Fabric specs → Java spec classes + C++ glue |
 | `react_native_dev_server` | Metro dev server (`react-native start`) |
@@ -171,6 +173,68 @@ gets an entry in the app's generated `autolinking.cpp`, which dispatches to its
 `<lib>_ModuleProvider` and `<lib>_registerComponentDescriptorsFromCodegen`; React Native's stock
 `OnLoad.cpp` is unchanged.
 
+### Kotlin
+
+`.kt` files go in `srcs` next to `.java` files, in apps and libraries. They compile as Gradle's
+Kotlin plugin does: kotlinc first (seeing the Java sources, including codegen's, for resolution
+only), then javac against kotlinc's classes, into one jar. kotlinc is
+`org.jetbrains.kotlin:kotlin-compiler-embeddable`, pinned in
+[`maven_kotlin_lock.json`](react_native/android/maven_kotlin_lock.json) and run on the same pinned
+JDK 21 as javac; the Kotlin stdlib is react-android's. `kotlincopts` passes extra flags.
+
+[rules_kotlin](https://github.com/bazelbuild/rules_kotlin) targets work as `deps` too (every
+library here carries `JavaInfo`), but the ruleset doesn't use it: it couldn't compile sources from
+inside an npm package, its Java half goes through rules_java's toolchain, and it brings
+rules_android into every consumer's graph.
+
+### Libraries from npm
+
+`react_native_npm_library` builds a native library from its installed npm package, without
+vendoring it. Its attributes restate what the package tells Gradle in `android/build.gradle`
+(source sets, `buildConfigField`), `src/main/jni/CMakeLists.txt` (C++ sources and includes) and
+`react-native.config.js` (component descriptors).
+[`examples/third_party`](examples/third_party) builds `react-native-safe-area-context`, which is
+Kotlin with a hand-written C++ shadow node:
+
+```starlark
+react_native_codegen(
+    name = "safe_area_context_codegen",
+    npm_package = "react-native-safe-area-context",   # specs come from the installed package
+    js_srcs_dir = "src/specs",
+    library_name = "safeareacontext",
+    java_package = "com.th3rdwave.safeareacontext",
+    node_modules = ":node_modules",
+)
+
+react_native_npm_library(
+    name = "safe_area_context",
+    npm_package = ":node_modules/react-native-safe-area-context",
+    package = "com.th3rdwave.safeareacontext",
+    java_dirs = ["android/src/main/java", "android/src/fabric/java"],
+    build_config = True,
+    cc_dirs = ["android/src/main/jni", "common/cpp/react/renderer/components/safeareacontext"],
+    cc_includes = ["android/src/main/jni", "common/cpp"],
+    codegen = [":safe_area_context_codegen"],
+    component_descriptors = ["RNCSafeAreaProviderComponentDescriptor", "RNCSafeAreaViewComponentDescriptor"],
+    react_packages = ["com.th3rdwave.safeareacontext.SafeAreaContextPackage"],
+)
+```
+
+The package's files are only known at execution time (rules_js extracts it in an action), so
+the directory attributes are paths inside it rather than labels. Its C++ is compiled into the app's
+`libappmodules.so` (React Native's Gradle setup builds one `.so` per library), with its include
+directories ahead of codegen's, so a library's own `<lib>.h` shadows the generated one as its
+CMakeLists.txt arranges.
+
+### C++ in libraries, and pure C++ TurboModules
+
+`react_native_android_library(cc_srcs = ...)` compiles C++ into `libappmodules.so`.
+`cxx_modules = {"facebook::react::NativeSampleModule": "NativeSampleModule.h"}` registers a
+module implemented against codegen's `<Name>CxxSpec` in `autolinking.cpp`'s `cxxModuleProvider`,
+under its `kModuleName`, so the same C++ can serve Android and iOS with no Java at all.
+`component_descriptors` registers hand-written Fabric descriptors. See
+[`examples/cxx_module`](examples/cxx_module).
+
 ### Debug builds and the dev server
 
 `react_native_android_app(debug = True)` builds against the `"build_type": "debug"` artifact set
@@ -205,6 +269,32 @@ build inputs, so they can't reach the action cache, a remote cache or build logs
 page alignment (`zipalign -c -P 16`), the signature (`apksigner verify`), that `resources.arsc` and
 every native library are stored uncompressed, that exactly the expected ABIs ship the expected
 libraries, and that the expected assets exist. CI runs it for every example app on Linux and macOS.
+
+## Examples
+
+[`examples/`](examples) is a consumer module (`cd examples && bazel test //...` builds every app
+and runs every test):
+
+| Example | Shows |
+| --- | --- |
+| [`hello`](examples/hello) | Release and debug apps, Metro, the iOS bundle, APK tests, Jest component tests under rules_jest |
+| [`native_modules`](examples/native_modules) | Codegen'd TurboModule and Fabric component in a library, with resources and assets |
+| [`cxx_module`](examples/cxx_module) | A pure C++ TurboModule, no Java |
+| [`third_party`](examples/third_party) | `react-native-safe-area-context` from npm (Kotlin, codegen, custom C++ shadow node), and Kotlin app code |
+| [`assets`](examples/assets) | Density-qualified images (`@2x`, `@3x`) and a custom font |
+| [`fleet`](examples/fleet) | Two apps sharing a workspace JS package and a native library, each overriding a library resource |
+| [`brownfield`](examples/brownfield) | A native launcher activity opening React Native screens with launch options |
+| [`variants`](examples/variants) | `--//variants:env=staging` builds an app with its own `application_id`, BuildConfig fields, manifest placeholders and JS config, installable side by side |
+| [`connect`](examples/connect) | One `.proto` generating code for a node server, a Vite web app and the mobile app, which reaches the server over `adb_reverse` |
+
+Some of these needed adaptations worth knowing about:
+
+- **Jest under rules_jest**: `hello/jest.config.js` resolves `@react-native/jest-preset` to a
+  relative path, restates Haste's platforms (rules_jest overrides `haste`), adds the app's
+  `node_modules` to `modulePaths`, and lets Babel transform `.aspect_rules_js` paths;
+  `pnpm-workspace.yaml` gives the preset `react`/`react-native` as peers.
+- **Hermes has no `TextDecoder`**, which Connect (and protobuf-es) need; `connect/mobile` loads
+  `fast-text-encoding` before anything else.
 
 ## How it works
 
@@ -326,12 +416,11 @@ honored.
 
 ## Limitations
 
-- **App code is Java.** There's no Kotlin compiler wired in. Kotlin *libraries* from Maven work.
-- **No automatic linking of npm libraries.** Native libraries installed from npm keep their specs,
-  Java and C++ inside `node_modules`, found via `react-native.config.js`; that isn't wired up. Their
-  code can be vendored into a `react_native_android_library`.
-- **No C++ TurboModules** (`cxxModuleProvider` returns nullptr) and no app-written C++ beyond what
-  codegen emits.
+- **npm libraries are declared, not autolinked.** `react_native_npm_library` needs the facts
+  Gradle reads from the package (source sets, C++ dirs, component descriptors) written down once.
+  Libraries that need annotation processors or KSP (e.g. Room) aren't supported.
+- **Library BuildConfig is release-only.** A library is built once for every app variant, so its
+  `BuildConfig.DEBUG` is false, as in a release AAR.
 - **APK only, no R8.** No `.aab` and no shrinking; about 30 MB for two ABIs.
 
 ## iOS
@@ -347,7 +436,7 @@ with `rules_apple`'s `ios_application` on a macOS executor instead of CocoaPods.
 bazel test //...                  # tool unit tests, API docs freshness
 bazel run //docs:update           # regenerate docs/ after changing a docstring
 cd examples && bazel test //...   # build every app and test every APK
-bazel run //react_native/android/tools:pin_tools   # re-pin the manifest merger
+bazel run //react_native/android/tools:pin_tools   # re-pin the manifest merger and kotlinc
 ```
 
 Releases are cut by pushing a `vX.Y.Z` tag whose version matches `MODULE.bazel`; the release

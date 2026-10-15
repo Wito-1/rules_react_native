@@ -47,7 +47,7 @@ _react_native_codegen_info = rule(
     },
 )
 
-def react_native_codegen(name, srcs, node_modules, library_name, java_package, js_srcs_dir, **kwargs):
+def react_native_codegen(name, node_modules, library_name, java_package, js_srcs_dir, srcs = [], npm_package = None, **kwargs):
     """Generates TurboModule and Fabric component glue from specs, as `codegenConfig` does in Gradle.
 
     The default output is a srcjar of the Java spec classes (`Native<Module>Spec`,
@@ -55,15 +55,23 @@ def react_native_codegen(name, srcs, node_modules, library_name, java_package, j
     `react_native_android_app(codegen = ...)` as well, which compiles the C++ into
     libappmodules.so and registers it in the generated autolinking.cpp.
 
+    For a library installed from npm, pass `npm_package` instead of `srcs`: the specs are read from
+    the installed package, and `js_srcs_dir` is relative to it. Pass the target to
+    `react_native_npm_library(codegen = ...)`.
+
     Args:
         name: Target name.
-        srcs: The spec files (`Native*.ts`, `*NativeComponent.ts`) and package.json.
         node_modules: The package's `npm_link_all_packages` target.
         library_name: `codegenConfig.name`, e.g. "AppSpecs".
         java_package: `codegenConfig.android.javaPackageName`.
-        js_srcs_dir: `codegenConfig.jsSrcsDir`, relative to this package.
+        js_srcs_dir: `codegenConfig.jsSrcsDir`, relative to this package (or to `npm_package`).
+        srcs: The spec files (`Native*.ts`, `*NativeComponent.ts`) and package.json.
+        npm_package: Name of an installed npm package whose specs to generate from, e.g.
+            "react-native-safe-area-context".
         **kwargs: Common attributes.
     """
+    if bool(srcs) == bool(npm_package):
+        fail("react_native_codegen: pass exactly one of `srcs` and `npm_package`")
     pkg = native.package_name()
     prefix = pkg + "/" if pkg else ""
     js_run_binary(
@@ -78,7 +86,7 @@ def react_native_codegen(name, srcs, node_modules, library_name, java_package, j
             "--java-package=" + java_package,
             "--out-java={}{}/java".format(prefix, name),
             "--out-jni={}{}/jni".format(prefix, name),
-        ],
+        ] + (["--npm-package=" + npm_package] if npm_package else []),
         mnemonic = "ReactNativeCodegen",
         progress_message = "Running React Native codegen for %{label}",
         **kwargs

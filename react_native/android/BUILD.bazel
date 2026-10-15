@@ -1,5 +1,7 @@
 exports_files([
     "debug.keystore",
+    "maven_kotlin_lock.json",
+    "maven_kotlin_spec.json",
     "maven_tools_lock.json",
     "maven_tools_spec.json",
 ])

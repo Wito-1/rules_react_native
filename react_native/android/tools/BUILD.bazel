@@ -25,12 +25,15 @@ py_binary(
     visibility = ["//visibility:public"],
 )
 
-# Re-pins the ruleset's own host tools (AGP's manifest merger).
+# Re-pins the ruleset's own host tools (AGP's manifest merger, the Kotlin compiler).
 py_binary(
     name = "pin_tools",
     legacy_create_init = 0,
     srcs = ["maven_resolve.py"],
-    args = ["--pin=react_native/android/maven_tools_spec.json=react_native/android/maven_tools_lock.json"],
+    args = [
+        "--pin=react_native/android/maven_tools_spec.json=react_native/android/maven_tools_lock.json",
+        "--pin=react_native/android/maven_kotlin_spec.json=react_native/android/maven_kotlin_lock.json",
+    ],
     main = "maven_resolve.py",
 )
 

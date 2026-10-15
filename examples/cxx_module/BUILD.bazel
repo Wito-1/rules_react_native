@@ -1,0 +1,75 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_android_library",
+    "react_native_apk_test",
+    "react_native_bundle",
+    "react_native_codegen",
+)
+
+npm_link_all_packages(name = "node_modules")
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = [
+        "App.tsx",
+        "app.json",
+        "babel.config.js",
+        "index.js",
+        "package.json",
+        "specs/NativeSampleModule.ts",
+    ],
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+# NativeSampleModuleCxxSpec (AppSpecsJSI.h), which the C++ implements.
+react_native_codegen(
+    name = "codegen",
+    srcs = [
+        "package.json",
+        "specs/NativeSampleModule.ts",
+    ],
+    java_package = "com.example.cxxmodule.specs",
+    js_srcs_dir = "specs",
+    library_name = "AppSpecs",
+    node_modules = ":node_modules",
+)
+
+# A pure C++ TurboModule: compiled into libappmodules.so and returned from autolinking.cpp's
+# cxxModuleProvider, with no Java or Kotlin of its own.
+react_native_android_library(
+    name = "sample_module",
+    cc_srcs = [
+        "shared/NativeSampleModule.cpp",
+        "shared/NativeSampleModule.h",
+    ],
+    codegen = [":codegen"],
+    cxx_modules = {"facebook::react::NativeSampleModule": "NativeSampleModule.h"},
+    package = "com.example.cxxmodule.sample",
+)
+
+react_native_android_app(
+    name = "cxx_module",
+    srcs = [
+        "android/java/com/example/cxxmodule/MainActivity.java",
+        "android/java/com/example/cxxmodule/MainApplication.java",
+    ],
+    bundle = ":bundle_android",
+    manifest = "android/AndroidManifest.xml",
+    package = "com.example.cxxmodule",
+    res = [
+        "android/res/drawable/rn_edit_text_material.xml",
+        "android/res/values/strings.xml",
+        "android/res/values/styles.xml",
+    ],
+    deps = [":sample_module"],
+)
+
+react_native_apk_test(
+    name = "cxx_module_apk_test",
+    apk = ":cxx_module",
+    assets = ["index.android.bundle"],
+    package = "com.example.cxxmodule",
+)

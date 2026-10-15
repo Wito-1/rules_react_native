@@ -1,0 +1,88 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_apk_test",
+    "react_native_bundle",
+    "react_native_codegen",
+    "react_native_npm_library",
+)
+
+npm_link_all_packages(name = "node_modules")
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = [
+        "App.tsx",
+        "app.json",
+        "babel.config.js",
+        "index.js",
+        "package.json",
+    ],
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+# react-native-safe-area-context from npm: Kotlin, codegen'd specs, and a hand-written C++ shadow
+# node. The attributes restate its android/build.gradle (new-architecture source sets),
+# src/main/jni/CMakeLists.txt and react-native.config.js.
+react_native_codegen(
+    name = "safe_area_context_codegen",
+    java_package = "com.th3rdwave.safeareacontext",
+    js_srcs_dir = "src/specs",
+    library_name = "safeareacontext",
+    node_modules = ":node_modules",
+    npm_package = "react-native-safe-area-context",
+)
+
+react_native_npm_library(
+    name = "safe_area_context",
+    # buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", ...
+    build_config = True,
+    cc_dirs = [
+        "android/src/main/jni",
+        "common/cpp/react/renderer/components/safeareacontext",
+    ],
+    cc_includes = [
+        "android/src/main/jni",
+        "common/cpp",
+    ],
+    codegen = [":safe_area_context_codegen"],
+    component_descriptors = [
+        "RNCSafeAreaProviderComponentDescriptor",
+        "RNCSafeAreaViewComponentDescriptor",
+    ],
+    java_dirs = [
+        "android/src/main/java",
+        "android/src/fabric/java",
+    ],
+    npm_package = ":node_modules/react-native-safe-area-context",
+    package = "com.th3rdwave.safeareacontext",
+    react_packages = ["com.th3rdwave.safeareacontext.SafeAreaContextPackage"],
+)
+
+react_native_android_app(
+    name = "third_party",
+    srcs = [
+        "android/java/com/example/thirdparty/MainActivity.kt",
+        "android/java/com/example/thirdparty/MainApplication.kt",
+    ],
+    bundle = ":bundle_android",
+    # Content draws under the status bar, so the insets the library reports are non-zero.
+    edge_to_edge = True,
+    manifest = "android/AndroidManifest.xml",
+    package = "com.example.thirdparty",
+    res = [
+        "android/res/drawable/rn_edit_text_material.xml",
+        "android/res/values/strings.xml",
+        "android/res/values/styles.xml",
+    ],
+    deps = [":safe_area_context"],
+)
+
+react_native_apk_test(
+    name = "third_party_apk_test",
+    apk = ":third_party",
+    assets = ["index.android.bundle"],
+    package = "com.example.thirdparty",
+)
