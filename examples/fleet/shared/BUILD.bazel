@@ -1,0 +1,47 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@rules_react_native//react_native:defs.bzl", "react_native_android_library", "react_native_codegen")
+
+package(default_visibility = ["//fleet:__subpackages__"])
+
+npm_link_all_packages(name = "node_modules")
+
+# The JS half: linked into each app's node_modules as @examples/fleet-shared.
+js_library(
+    name = "pkg",
+    srcs = [
+        "StatusCard.tsx",
+        "index.ts",
+        "package.json",
+        "specs/NativeVehicleInfo.ts",
+        "theme.ts",
+    ],
+    # The rules_js store in the root package links it into each consumer's node_modules.
+    visibility = ["//visibility:public"],
+    deps = [":node_modules"],
+)
+
+react_native_codegen(
+    name = "codegen",
+    srcs = [
+        "package.json",
+        "specs/NativeVehicleInfo.ts",
+    ],
+    java_package = "com.example.fleet.vehicle.specs",
+    js_srcs_dir = "specs",
+    library_name = "FleetSpecs",
+    node_modules = ":node_modules",
+)
+
+# The native half, shared by both apps. An app can override fleet_app_role in its own res/.
+react_native_android_library(
+    name = "vehicle",
+    srcs = [
+        "android/java/com/example/fleet/vehicle/VehicleInfoModule.java",
+        "android/java/com/example/fleet/vehicle/VehiclePackage.java",
+    ],
+    codegen = [":codegen"],
+    package = "com.example.fleet.vehicle",
+    react_packages = ["com.example.fleet.vehicle.VehiclePackage"],
+    res = ["android/res/values/strings.xml"],
+)

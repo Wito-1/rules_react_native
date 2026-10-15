@@ -260,6 +260,17 @@ android_app_resources = rule(
     }),
 )
 
+def _app_assets(files):
+    roots = {}
+    for f in files:
+        idx = f.path.find("/assets/")
+        if idx < 0:
+            fail("%s is not under an assets/ directory" % f.path)
+        roots[f.path[:idx + len("/assets")]] = True
+    if len(roots) > 1:
+        fail("all `assets` files must share one assets/ directory, got %s" % sorted(roots))
+    return [(f.path[f.path.find("/assets/") + len("/assets/"):], f) for f in files]
+
 def _android_apk_impl(ctx):
     res_info = ctx.attr.resources[AndroidAppResourcesInfo]
     infos = collect_android_infos(ctx.attr.deps)
@@ -308,13 +319,15 @@ def _android_apk_impl(ctx):
         apk_args.add("--asset", "%s=%s" % (asset.path, asset.file.path))
     for f in ctx.files.assets:
         apk_args.add("--asset", "%s=%s" % (f.basename, f.path))
+    for path, f in _app_assets(ctx.files.app_assets):
+        apk_args.add("--asset", "%s=%s" % (path, f.path))
     apk_args.add_all(runtime_jars, before_each = "--java_resources_from")
     apk_args.add("--out", unsigned)
     ctx.actions.run(
         executable = ctx.executable._build_apk,
         arguments = [apk_args],
         inputs = depset(
-            [res_info.resources_apk, dex] + runtime_jars + ctx.files.assets +
+            [res_info.resources_apk, dex] + runtime_jars + ctx.files.assets + ctx.files.app_assets +
             [lib.file for lib in native_libs] + [a.file for a in assets],
         ),
         outputs = [unsigned],
@@ -372,6 +385,7 @@ android_apk = rule(
     doc = "Dexes the app's runtime classpath and packages it with linked resources, native libraries and assets into a signed APK.",
     attrs = dict(_SDK_ATTRS, **{
         "abis": attr.string_list(mandatory = True),
+        "app_assets": attr.label_list(allow_files = True, doc = "Files under one assets/ directory, packaged at the same relative paths (e.g. assets/fonts/X.ttf)."),
         "assets": attr.label_list(allow_files = True, doc = "Files placed at the root of assets/, e.g. index.android.bundle."),
         "debug": attr.bool(default = False),
         "deps": attr.label_list(providers = [[JavaInfo], [AndroidLibraryInfo]]),

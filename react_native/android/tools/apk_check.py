@@ -34,6 +34,7 @@ def main() -> int:
         default=[],
         help="Path under assets/ that must exist",
     )
+    parser.add_argument("--entry", action="append", default=[], help="Any other path that must exist in the APK")
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -98,6 +99,9 @@ def main() -> int:
     for asset in args.asset:
         if f"assets/{asset}" not in infos:
             failures.append(f"missing assets/{asset}")
+    for entry in args.entry:
+        if entry not in infos:
+            failures.append(f"missing {entry}")
 
     if failures:
         print(f"{args.apk}: {len(failures)} problem(s)", file=sys.stderr)

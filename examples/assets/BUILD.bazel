@@ -1,0 +1,62 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load(
+    "@rules_react_native//react_native:defs.bzl",
+    "react_native_android_app",
+    "react_native_apk_test",
+    "react_native_bundle",
+)
+
+npm_link_all_packages(name = "node_modules")
+
+react_native_bundle(
+    name = "bundle_android",
+    srcs = [
+        "App.tsx",
+        "app.json",
+        "babel.config.js",
+        "images/dot.png",
+        "images/dot@2x.png",
+        "images/dot@3x.png",
+        "index.js",
+        "package.json",
+    ],
+    node_modules = ":node_modules",
+    platform = "android",
+)
+
+react_native_android_app(
+    name = "assets",
+    srcs = [
+        "android/java/com/example/assets/MainActivity.java",
+        "android/java/com/example/assets/MainApplication.java",
+    ],
+    # Pacifico is SIL OFL 1.1; its license ships next to it.
+    assets = [
+        "assets/fonts/Pacifico-OFL.txt",
+        "assets/fonts/Pacifico.ttf",
+    ],
+    bundle = ":bundle_android",
+    manifest = "android/AndroidManifest.xml",
+    package = "com.example.assets",
+    res = [
+        "android/res/drawable/rn_edit_text_material.xml",
+        "android/res/values/strings.xml",
+        "android/res/values/styles.xml",
+    ],
+)
+
+react_native_apk_test(
+    name = "assets_apk_test",
+    apk = ":assets",
+    assets = [
+        "fonts/Pacifico.ttf",
+        "index.android.bundle",
+    ],
+    # Metro names image resources after their path; aapt2 adds -v4 to density qualifiers.
+    entries = [
+        "res/drawable-mdpi-v4/images_dot.png",
+        "res/drawable-xhdpi-v4/images_dot.png",
+        "res/drawable-xxhdpi-v4/images_dot.png",
+    ],
+    package = "com.example.assets",
+)

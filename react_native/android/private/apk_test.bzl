@@ -21,6 +21,7 @@ def _react_native_apk_test_impl(ctx):
     args += ["--abi=" + a for a in ctx.attr.abis]
     args += ["--native_lib=" + lib for lib in ctx.attr.native_libs]
     args += ["--asset=" + a for a in ctx.attr.assets]
+    args += ["--entry=" + e for e in ctx.attr.entries]
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(script, _SCRIPT.format(
         tool = _rlocation(ctx, ctx.executable._apk_check.short_path),
@@ -46,6 +47,7 @@ that every ABI ships the expected native libraries uncompressed, plus the expect
         "abis": attr.string_list(default = ["arm64-v8a", "x86_64"], doc = "Exactly the ABIs the APK must ship."),
         "apk": attr.label(allow_single_file = [".apk"], mandatory = True),
         "assets": attr.string_list(doc = "Paths under assets/ that must exist, e.g. index.android.bundle."),
+        "entries": attr.string_list(doc = "Any other paths that must exist in the APK, e.g. res/drawable-xhdpi-v4/images_logo.png."),
         "native_libs": attr.string_list(
             default = ["libreactnative.so", "libappmodules.so", "libhermesvm.so", "libc++_shared.so"],
             doc = "Libraries every ABI must ship.",

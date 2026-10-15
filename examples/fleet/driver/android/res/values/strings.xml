@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Fleet Driver</string>
+    <!-- Overrides the fleet library's default; the library reads it through its own R class. -->
+    <string name="fleet_app_role">driver</string>
+</resources>

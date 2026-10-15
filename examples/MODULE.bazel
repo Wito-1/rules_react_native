@@ -17,6 +17,10 @@ npm.npm_translate_lock(
     name = "npm",
     data = [
         "//:hello/package.json",
+        "//:assets/package.json",
+        "//:fleet/driver/package.json",
+        "//:fleet/operator/package.json",
+        "//:fleet/shared/package.json",
         "//:native_modules/package.json",
         "//:package.json",
         "//:pnpm-workspace.yaml",

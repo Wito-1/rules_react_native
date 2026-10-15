@@ -1,0 +1,9 @@
+{
+  "name": "@examples/fleet-shared",
+  "private": true,
+  "main": "index.ts",
+  "dependencies": {
+    "react": "19.2.4",
+    "react-native": "0.87.1"
+  }
+}

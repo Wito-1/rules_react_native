@@ -1,6 +1,10 @@
 packages:
   - "hello"
   - "native_modules"
+  - "assets"
+  - "fleet/driver"
+  - "fleet/operator"
+  - "fleet/shared"
 
 # No dependency needs install scripts; rules_js requires the list to be explicit.
 onlyBuiltDependencies: []

@@ -37,12 +37,29 @@ function linkRoots(projectRoot) {
       break;
     }
   }
-  let link = path.join(projectRoot, "node_modules", "react-native");
-  while (fs.lstatSync(link).isSymbolicLink()) {
-    const target = path.resolve(path.dirname(link), fs.readlinkSync(link));
-    const idx = target.indexOf(STORE_MARKER);
-    add(idx >= 0 ? path.join(target.slice(0, idx), "node_modules") : path.dirname(target));
-    link = target;
+  // Every package the app links, not just react-native: first-party workspace packages resolve
+  // through their own chain (often into another package's bazel-out directory).
+  const nodeModules = path.join(projectRoot, "node_modules");
+  const links = [];
+  for (const entry of fs.readdirSync(nodeModules)) {
+    if (entry.startsWith(".")) {
+      continue;
+    }
+    if (entry.startsWith("@")) {
+      for (const scoped of fs.readdirSync(path.join(nodeModules, entry))) {
+        links.push(path.join(nodeModules, entry, scoped));
+      }
+    } else {
+      links.push(path.join(nodeModules, entry));
+    }
+  }
+  for (let link of links) {
+    while (fs.lstatSync(link).isSymbolicLink()) {
+      const target = path.resolve(path.dirname(link), fs.readlinkSync(link));
+      const idx = target.indexOf(STORE_MARKER);
+      add(idx >= 0 ? path.join(target.slice(0, idx), "node_modules") : path.dirname(target));
+      link = target;
+    }
   }
   if (roots.length === 0) {
     throw new Error(`no rules_js node_modules store found for ${projectRoot}`);

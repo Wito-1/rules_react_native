@@ -32,6 +32,7 @@ def react_native_android_app(
         maven_debug = None,
         srcs = [],
         res = [],
+        assets = [],
         deps = [],
         codegen = [],
         react_packages = [],
@@ -72,6 +73,8 @@ def react_native_android_app(
             `debug = True`. Defaults to the lockfile with `"build_type": "debug"`.
         srcs: Java sources, typically MainApplication and MainActivity.
         res: Files under one `res/` directory.
+        assets: Files under one `assets/` directory, packaged at the same relative paths. Custom
+            fonts go in `assets/fonts/<fontFamily>.ttf`, where React Native's font manager looks.
         deps: `react_native_android_library`, `react_native_java_library`, Maven artifacts
             (`@rn_maven//:<group>_<artifact>`) or plain `java_library` targets.
         codegen: `react_native_codegen` targets. Their Java specs are compiled with `srcs`, their
@@ -159,6 +162,7 @@ def react_native_android_app(
         resources = name + "_resources",
         deps = [name + "_lib", name + "_appmodules", rn_maven] + deps,
         assets = [bundle] if bundle else [],
+        app_assets = assets,
         abis = abis,
         debug = debug,
         keystore = keystore,

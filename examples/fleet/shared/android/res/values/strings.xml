@@ -1,0 +1,4 @@
+<resources>
+    <!-- Default; each app overrides it with its own value. -->
+    <string name="fleet_app_role">unknown</string>
+</resources>
