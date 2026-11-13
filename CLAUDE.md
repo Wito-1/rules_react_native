@@ -66,6 +66,16 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   `<lib>_registerComponentDescriptorsFromCodegen` (codegen `interfaceOnly` components have no
   generated descriptor); `cxx_modules` fills `cxxModuleProvider`; `codegen_cc_dirs` limits which
   codegen sources compile; a unit with `soname` becomes its own `lib<soname>.so`.
+- **Prefab headers between npm libraries**: a library whose Gradle publishes headers (`prefab {
+  X { headers ... } }` filled by a Copy task, as react-native-nitro-modules does) gets
+  `prefab_headers = {prefix: [dirs]}`, flattened by `tools/prefab_headers.py` into a tree that
+  every shared library linking one of its sonames (`shared_library_links`) compiles against.
+  Autolinking finds the Copy task by its `into ".../headers/.../<prefix>/"`.
+- **Duplicate native libraries**: some AARs ship their own `libc++_shared.so` (MMKV does).
+  `pick_native_libs` (`aar.bzl`) keeps React Native's own copy (react-android, fbjni,
+  hermes-android) of any file those ship, for packaging and for `libappmodules.so`'s link;
+  React Native's Gradle plugin `pickFirst`s these, which leaves it to dependency order. Any
+  other differing duplicate still fails packaging.
 - **Shipping outputs**: `android_apk` dexes with D8, or R8 when `minify` (`tools/r8.py` gathers the
   rules: defaults, aapt2 `--proguard`, `AndroidLibraryInfo.proguard_specs`, jars'
   `META-INF/com.android.tools/r8*` over `META-INF/proguard`). The `.aab` reuses the APK's

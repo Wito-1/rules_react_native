@@ -349,6 +349,24 @@ def _react_native_npm_library_impl(ctx):
             includes = [path(d) for d in ctx.attr.cc_includes],
             component_descriptors = ctx.attr.component_descriptors,
         ))
+    prefab = []
+    if ctx.attr.prefab_headers:
+        if not ctx.attr.shared_libraries:
+            fail("prefab_headers needs shared_libraries: they are the headers of the library's own native libraries")
+        prefab_dir = ctx.actions.declare_directory(ctx.label.name + "/prefab_include")
+        prefab_args = ctx.actions.args()
+        prefab_args.add("--out", prefab_dir.path)
+        for prefix, dirs in sorted(ctx.attr.prefab_headers.items()):
+            prefab_args.add_all(["--dir=%s=%s" % (prefix, path(d)) for d in dirs])
+        ctx.actions.run(
+            executable = ctx.executable._prefab_headers,
+            arguments = [prefab_args],
+            inputs = [pkg],
+            outputs = [prefab_dir],
+            mnemonic = "ReactNativePrefabHeaders",
+            progress_message = "Collecting the prefab headers of %{label}",
+        )
+        prefab = [prefab_dir]
     for soname, srcs in sorted(ctx.attr.shared_libraries.items()):
         appmodules.append(appmodules_unit(
             key = "%s#%s" % (ctx.label, soname),
@@ -356,6 +374,10 @@ def _react_native_npm_library_impl(ctx):
             tree_src_dirs = [path(s) for s in srcs],
             includes = [path(i) for i in ctx.attr.shared_library_includes.get(soname, [])],
             soname = soname,
+            defines = ctx.attr.shared_library_defines.get(soname, []),
+            links = ctx.attr.shared_library_links.get(soname, []),
+            exported_trees = prefab,
+            exported_includes = [d.path for d in prefab],
         ))
 
     return _build_library(
@@ -397,12 +419,25 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
         "manifest": attr.string(default = "android/src/main/AndroidManifest.xml", doc = "Library manifest; empty for none."),
         "proguard_specs": attr.string_list(doc = "R8/ProGuard rules files in the package that apps must apply (`consumerProguardFiles`), e.g. `[\"android/proguard-rules.pro\"]`."),
         "npm_package": attr.label(mandatory = True, doc = "The package's link target from `npm_link_all_packages`, e.g. `:node_modules/react-native-safe-area-context`."),
+        "prefab_headers": attr.string_list_dict(
+            doc = "Headers the library publishes for other libraries' native code (Gradle `prefab { headers }`), " +
+                  "`{prefix: [directories]}`: every .h/.hpp below the directories is flattened into `<prefix>/`, " +
+                  "e.g. `{\"NitroModules\": [\"cpp\", \"android/src/main/cpp\"]}` for `#include <NitroModules/HybridObject.hpp>`. " +
+                  "Shared libraries of this library and of libraries that link one of them compile against it.",
+        ),
         "res_dirs": attr.string_list(doc = "res/ directories (Gradle's `res.srcDirs`), e.g. `[\"android/src/main/res\"]`; later ones overlay earlier ones."),
         "shared_libraries": attr.string_list_dict(
             doc = "The library's own native libraries (its `externalNativeBuild` CMakeLists.txt), `{name: [sources]}`: " +
                   "`lib<name>.so` is built per ABI with React Native's flags and libraries and packaged next to them.",
         ),
+        "shared_library_defines": attr.string_list_dict(doc = "Preprocessor definitions of each of `shared_libraries`."),
         "shared_library_includes": attr.string_list_dict(doc = "Include roots of each of `shared_libraries`."),
+        "shared_library_links": attr.string_list_dict(
+            doc = "Other native libraries each of `shared_libraries` links, by name without `lib`/`.so`: another npm " +
+                  "library's shared library (whose includes it also gets; add that library to `deps`), or one an AAR " +
+                  "in the Maven set ships (prefab). React Native's, fbjni, log and android are always linked.",
+        ),
         "_merge_zips": attr.label(default = "//react_native/android/tools:merge_zips", executable = True, cfg = "exec"),
+        "_prefab_headers": attr.label(default = "//react_native/android/tools:prefab_headers", executable = True, cfg = "exec"),
     }),
 )

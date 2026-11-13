@@ -2,7 +2,7 @@
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "compile_resources", "resolve_app_deps")
+load(":aar.bzl", "AndroidLibraryInfo", "collect_android_infos", "compile_resources", "pick_native_libs", "resolve_app_deps")
 load(":java.bzl", "JAVA_ATTRS", "run_java_tool")
 
 AndroidAppResourcesInfo = provider(
@@ -362,7 +362,7 @@ def _android_apk_impl(ctx):
             progress_message = "Dexing %{label}",
         )
 
-    native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
+    native_libs = pick_native_libs(depset(transitive = [i.native_libs for i in infos]).to_list())
     native_libs = [lib for lib in native_libs if lib.abi in ctx.attr.abis]
     assets = depset(transitive = [i.assets for i in infos]).to_list()
 

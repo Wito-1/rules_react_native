@@ -3,21 +3,31 @@ import { createNativeStackNavigator, type NativeStackScreenProps } from "@react-
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView, RectButton, useTapGesture } from "react-native-gesture-handler";
+import { createMMKV } from "react-native-mmkv";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import Svg, { Circle, Rect } from "react-native-svg";
 
 type Routes = { Home: undefined; Details: { taps: number } };
+const storage = createMMKV();
 const Stack = createNativeStackNavigator<Routes>();
 
 function Home({ navigation }: NativeStackScreenProps<Routes, "Home">) {
-  const [taps, setTaps] = useState(0);
-  const tap = useTapGesture({ onActivate: () => setTaps((t) => t + 1), runOnJS: true });
+  // Persisted with react-native-mmkv (a Nitro module): survives restarts.
+  const [taps, setTaps] = useState(() => storage.getNumber("taps") ?? 0);
+  const tap = useTapGesture({
+    onActivate: () =>
+      setTaps((t) => {
+        storage.set("taps", t + 1);
+        return t + 1;
+      }),
+    runOnJS: true,
+  });
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>react-native-gesture-handler</Text>
       <GestureDetector gesture={tap}>
         <View style={styles.target}>
-          <Text style={styles.targetText}>Tapped {taps} times</Text>
+          <Text style={styles.targetText}>Tapped {taps} times (stored in MMKV)</Text>
         </View>
       </GestureDetector>
       <RectButton style={styles.button} onPress={() => navigation.navigate("Details", { taps })}>

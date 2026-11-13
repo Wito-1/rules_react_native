@@ -1510,6 +1510,27 @@
       "sha256": "b9255c163b7edc0b8406559d66579c6c32dea01f691943bac5d3fdbd10f69b44",
       "url": "https://repo1.maven.org/maven2/com/squareup/okio/okio/2.9.0/okio-2.9.0.jar"
     },
+    "io_github_zhongwuzw_annotation": {
+      "api_deps": [],
+      "coordinate": "io.github.zhongwuzw:annotation:2.4.1",
+      "deps": [
+        "androidx_annotation_annotation"
+      ],
+      "packaging": "aar",
+      "sha256": "4071153699182d028a0a881f4647b8309ef22b1587c67bb1aa67c55edf56e947",
+      "url": "https://repo1.maven.org/maven2/io/github/zhongwuzw/annotation/2.4.1/annotation-2.4.1.aar"
+    },
+    "io_github_zhongwuzw_mmkv": {
+      "api_deps": [],
+      "coordinate": "io.github.zhongwuzw:mmkv:2.4.1",
+      "deps": [
+        "androidx_annotation_annotation",
+        "io_github_zhongwuzw_annotation"
+      ],
+      "packaging": "aar",
+      "sha256": "94453f1eb39b7d70e37d7b7998533deb185b528dd77c9be6cadc6b8f1c78ddd7",
+      "url": "https://repo1.maven.org/maven2/io/github/zhongwuzw/mmkv/2.4.1/mmkv-2.4.1.aar"
+    },
     "javax_inject_javax_inject": {
       "api_deps": [],
       "coordinate": "javax.inject:javax.inject:1",

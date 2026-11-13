@@ -10,7 +10,7 @@ build. iOS currently stops at the JS bundle (see [iOS](#ios)).
 
 | | |
 | --- | --- |
-| React Native | 0.86, 0.87 (see [Versions](#versions)) |
+| React Native | 0.86, 0.87, 0.88 (see [Versions](#versions)) |
 | Bazel | 8, 9 |
 | Build hosts | Linux x86_64, macOS (Apple Silicon and Intel) |
 | API reference | [`docs/defs.md`](docs/defs.md), [`docs/extensions.md`](docs/extensions.md) |
@@ -400,6 +400,7 @@ flags. An unsupported version fails at module resolution with the list of suppor
 | --- | --- | --- | --- |
 | 0.86 | 36 / 36.0.0 | 27.1.12297006 (r27b) | |
 | 0.87 | 37 / 37.0.0 | 27.1.12297006 (r27b) | `HERMES_V1_ENABLED` for native code |
+| 0.88 | 37 / 37.0.0 | 27.1.12297006 (r27b) | `HERMES_V1_ENABLED` for native code |
 
 `versions.bzl` lists what adding a version involves. The root module can pick a different pinned
 SDK/NDK with `react_native.android_toolchain(compile_sdk = ..., build_tools = ..., ndk = ...)`.

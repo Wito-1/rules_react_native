@@ -63,6 +63,144 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         },
         **kwargs
     )
+    react_native_npm_library(
+        name = "npm_react_native_mmkv",
+        build_config = True,
+        deps = [
+            ":npm_react_native_nitro_modules",
+        ],
+        java_dirs = [
+            "android/src/main/java",
+            "nitrogen/generated/android/kotlin",
+        ],
+        manifest = "android/src/main/AndroidManifest.xml",
+        maven_deps = [
+            maven + "//:io_github_zhongwuzw_mmkv",
+        ],
+        npm_package = node_modules + "/react-native-mmkv",
+        package = "com.margelo.nitro.mmkv",
+        react_packages = [
+            "com.margelo.nitro.mmkv.NitroMmkvPackage",
+        ],
+        shared_libraries = {
+            "NitroMmkv": [
+                "cpp/HybridMMKV.cpp",
+                "cpp/HybridMMKVFactory.cpp",
+                "cpp/MMKVValueChangedListenerRegistry.cpp",
+                "android/src/main/cpp/cpp-adapter.cpp",
+                "nitrogen/generated/android/NitroMmkvOnLoad.cpp",
+                "nitrogen/generated/shared/c++/HybridMMKVSpec.cpp",
+                "nitrogen/generated/shared/c++/HybridMMKVFactorySpec.cpp",
+                "nitrogen/generated/shared/c++/HybridMMKVPlatformContextSpec.cpp",
+                "nitrogen/generated/android/c++/JHybridMMKVPlatformContextSpec.cpp",
+            ],
+        },
+        shared_library_defines = {
+            "NitroMmkv": [
+                "BUILDING_NITROMMKV_WITH_GENERATED_CMAKE_PROJECT",
+                "RN_SERIALIZABLE_STATE",
+            ],
+        },
+        shared_library_includes = {
+            "NitroMmkv": [
+                "nitrogen/generated/shared/c++",
+                "nitrogen/generated/android/c++",
+                "nitrogen/generated/android",
+                "android/src/main/cpp",
+                "cpp",
+            ],
+        },
+        shared_library_links = {
+            "NitroMmkv": [
+                "NitroModules",
+                "mmkv",
+            ],
+        },
+        **kwargs
+    )
+    react_native_codegen(
+        name = "npm_react_native_nitro_modules_codegen",
+        java_package = "com.margelo.nitro",
+        js_srcs_dir = "src",
+        library_name = "NitroModulesSpec",
+        node_modules = node_modules,
+        npm_package = "react-native-nitro-modules",
+        **kwargs
+    )
+    react_native_npm_library(
+        name = "npm_react_native_nitro_modules",
+        build_config = True,
+        codegen = [":npm_react_native_nitro_modules_codegen"],
+        java_dirs = [
+            "android/src/main/java",
+            "android/src/newarch",
+        ],
+        manifest = "android/src/main/AndroidManifest.xml",
+        npm_package = node_modules + "/react-native-nitro-modules",
+        package = "com.margelo.nitro",
+        prefab_headers = {
+            "NitroModules": [
+                "android/src/main/cpp",
+                "cpp",
+            ],
+        },
+        react_packages = [
+            "com.margelo.nitro.NitroModulesPackage",
+        ],
+        res_dirs = [
+            "android/src/main/res",
+        ],
+        shared_libraries = {
+            "NitroModules": [
+                "cpp/core/AnyMap.cpp",
+                "cpp/core/ArrayBuffer.cpp",
+                "cpp/core/BoxedHybridObject.cpp",
+                "cpp/core/HybridObject.cpp",
+                "cpp/core/Promise.cpp",
+                "cpp/entrypoint/HybridNitroModulesProxy.cpp",
+                "cpp/entrypoint/InstallNitro.cpp",
+                "cpp/jsi/JSICache.cpp",
+                "cpp/prototype/HybridObjectPrototype.cpp",
+                "cpp/registry/HybridObjectRegistry.cpp",
+                "cpp/threading/Dispatcher.cpp",
+                "cpp/threading/ThreadPool.cpp",
+                "cpp/utils/CommonGlobals.cpp",
+                "cpp/utils/NitroTypeInfo.cpp",
+                "cpp/utils/PropNameIDCache.cpp",
+                "cpp/views/RawPropsCompat.cpp",
+                "android/src/main/cpp/JNIOnLoad.cpp",
+                "android/src/main/cpp/core/JAnyMap.cpp",
+                "android/src/main/cpp/core/JHybridObject.cpp",
+                "android/src/main/cpp/platform/NitroLogger.cpp",
+                "android/src/main/cpp/platform/ThreadUtils.cpp",
+                "android/src/main/cpp/threading/UIThreadDispatcher.cpp",
+                "android/src/main/cpp/turbomodule/JNitroModules.cpp",
+                "android/src/main/cpp/utils/JHardwareBufferUtils.cpp",
+            ],
+        },
+        shared_library_includes = {
+            "NitroModules": [
+                "cpp/core",
+                "cpp/entrypoint",
+                "cpp/jsi",
+                "cpp/platform",
+                "cpp/registry",
+                "cpp/prototype",
+                "cpp/templates",
+                "cpp/threading",
+                "cpp/utils",
+                "cpp/views",
+                "android/src/main/cpp/core",
+                "android/src/main/cpp/registry",
+                "android/src/main/cpp/turbomodule",
+                "android/src/main/cpp/platform",
+                "android/src/main/cpp/threading",
+                "android/src/main/cpp/utils",
+                "android/src/main/cpp/views",
+            ],
+        },
+        **kwargs
+    )
     react_native_codegen(
         name = "npm_react_native_safe_area_context_codegen",
         java_package = "com.th3rdwave.safeareacontext",
@@ -296,6 +434,8 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
     )
     return [
         ":npm_react_native_gesture_handler",
+        ":npm_react_native_mmkv",
+        ":npm_react_native_nitro_modules",
         ":npm_react_native_safe_area_context",
         ":npm_react_native_screens",
         ":npm_react_native_svg",

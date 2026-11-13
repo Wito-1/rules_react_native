@@ -13,7 +13,8 @@
     "com.facebook.fresco:fresco:3.7.0",
     "com.facebook.fresco:imagepipeline-okhttp3:3.7.0",
     "com.facebook.fresco:middleware:3.7.0",
-    "com.google.android.material:material:1.13.0"
+    "com.google.android.material:material:1.13.0",
+    "io.github.zhongwuzw:mmkv:2.4.1"
   ],
   "build_type": "debug",
   "excludes": []

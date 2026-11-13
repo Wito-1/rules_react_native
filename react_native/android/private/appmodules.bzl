@@ -1,7 +1,7 @@
 """Compiles the app's libappmodules.so, which registers React Native's TurboModule providers."""
 
 load("//react_native/js/private:codegen.bzl", "ReactNativeCodegenInfo")
-load(":aar.bzl", "AndroidLibraryInfo", "appmodules_unit", "collect_android_infos", "merge_android_infos", "resolve_app_deps")
+load(":aar.bzl", "AndroidLibraryInfo", "appmodules_unit", "collect_android_infos", "merge_android_infos", "pick_native_libs", "resolve_app_deps")
 
 _ABI_TARGETS = {
     "arm64-v8a": "aarch64-linux-android",
@@ -129,7 +129,26 @@ def _tree_sources(paths):
 
     return map_each
 
-def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs):
+def _shared_libraries_in_order(shared):
+    """Sonames ordered so that every unit comes after the units it links."""
+    ordered = []
+    done = {}
+    for _ in range(len(shared) + 1):
+        progress = False
+        for soname, u in sorted(shared.items()):
+            if soname in done:
+                continue
+            if all([l in done or l not in shared for l in u.links]):
+                ordered.append(soname)
+                done[soname] = True
+                progress = True
+        if not progress:
+            break
+    if len(ordered) != len(shared):
+        fail("native libraries link each other in a cycle: %s" % sorted([s for s in shared if s not in done]))
+    return ordered
+
+def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs, shared, built, abi_libs):
     """Builds a library's own lib<soname>.so with the same flags and React Native libraries."""
     unstripped = ctx.actions.declare_file("%s/unstripped/%s/lib%s.so" % (ctx.label.name, abi, soname))
     out = ctx.actions.declare_file("%s/%s/lib%s.so" % (ctx.label.name, abi, soname))
@@ -140,7 +159,14 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs):
     if not ctx.attr.debug:
         args.add_all(_RELEASE_COPTS)
     args.add_all(ctx.attr.copts)
-    args.add_all(unit.includes, format_each = "-I%s", uniquify = True)
+    args.add_all(["-D" + d for d in unit.defines])
+    linked_units = [shared[l] for l in unit.links if l in shared]
+    args.add_all(
+        list(unit.includes) + list(unit.exported_includes) +
+        [i for u in linked_units for i in list(u.includes) + list(u.exported_includes)],
+        format_each = "-I%s",
+        uniquify = True,
+    )
     args.add_all({f.dirname: True for f in unit.hdrs}.keys(), format_each = "-I%s")
     args.add_all(include_dirs, format_each = "-I%s")
     args.add_all(unit.srcs)
@@ -148,6 +174,17 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs):
         args.add_all(unit.trees, map_each = _tree_sources(unit.tree_src_dirs), allow_closure = True)
     args.add("-nostdlib++")
     args.add_all([link_libs[l] for l in _LINK_LIBS])
+    extra_links = []
+    for l in unit.links:
+        if l in built:
+            extra_links.append(built[l])
+        elif "lib%s.so" % l in abi_libs:
+            extra_links.append(abi_libs["lib%s.so" % l])
+        elif "lib%s.a" % l in abi_libs:
+            extra_links.append(abi_libs["lib%s.a" % l])
+        else:
+            fail("lib%s.so links %s, which no library builds or ships for %s" % (soname, l, abi))
+    args.add_all(extra_links)
     args.add_all([
         "-llog",
         "-landroid",
@@ -163,7 +200,10 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs):
         executable = ctx.file._clang,
         arguments = [args],
         inputs = depset(
-            list(unit.srcs) + list(unit.hdrs) + list(unit.trees) + link_libs.values(),
+            list(unit.srcs) + list(unit.hdrs) + list(unit.trees) + link_libs.values() + extra_links +
+            list(unit.exported_trees) +
+            [t for u in linked_units for t in list(u.trees) + list(u.exported_trees)] +
+            [h for u in linked_units for h in u.hdrs],
             transitive = [headers],
         ),
         tools = ctx.files._toolchain_files,
@@ -183,7 +223,7 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs):
 
 def _react_native_appmodules_impl(ctx):
     infos = collect_android_infos(resolve_app_deps(ctx.attr.deps))
-    native_libs = depset(transitive = [i.native_libs for i in infos]).to_list()
+    native_libs = pick_native_libs(depset(transitive = [i.native_libs for i in infos]).to_list())
     headers = depset(transitive = [i.cc_headers for i in infos])
     include_dirs = depset(transitive = [i.cc_include_dirs for i in infos]).to_list()
 
@@ -296,8 +336,15 @@ def _react_native_appmodules_impl(ctx):
         outputs.append(struct(abi = abi, file = out))
         debug_outputs.append(struct(abi = abi, file = unstripped))
 
-        for soname, u in sorted(shared.items()):
-            lib_out, lib_unstripped = _shared_library(ctx, abi, soname, u, link_libs, headers, include_dirs)
+        # Link against the unstripped copies: same symbols, and no dependency on the strip step.
+        built = {}
+        abi_libs = {}
+        for lib in native_libs:
+            if lib.abi == abi:
+                abi_libs.setdefault(lib.file.basename, lib.file)
+        for soname in _shared_libraries_in_order(shared):
+            lib_out, lib_unstripped = _shared_library(ctx, abi, soname, shared[soname], link_libs, headers, include_dirs, shared, built, abi_libs)
+            built[soname] = lib_unstripped
             outputs.append(struct(abi = abi, file = lib_out))
             debug_outputs.append(struct(abi = abi, file = lib_unstripped))
 

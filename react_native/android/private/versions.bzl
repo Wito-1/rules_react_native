@@ -100,6 +100,13 @@ REACT_NATIVE_PROFILES = {
         # react-native-flags.cmake defines this unconditionally from 0.87 on (Hermes V1).
         appmodules_copts = ["-DHERMES_V1_ENABLED=1"],
     ),
+    # Same toolchain, flags, OnLoad.cpp and entry point/package list generation as 0.87.
+    "0.88": struct(
+        compile_sdk = 37,
+        build_tools = "37.0.0",
+        ndk = "27.1.12297006",
+        appmodules_copts = ["-DHERMES_V1_ENABLED=1"],
+    ),
 }
 
 # Used when no consumer pins react-android, e.g. building this module's own tests.

@@ -33,7 +33,11 @@ def appmodules_unit(
         includes = [],
         component_descriptors = [],
         cxx_modules = {},
-        soname = None):
+        soname = None,
+        defines = [],
+        links = [],
+        exported_trees = [],
+        exported_includes = []):
     """What one library contributes to libappmodules.so, or a shared library of its own.
 
     Args:
@@ -60,6 +64,13 @@ def appmodules_unit(
         soname: Build `lib<soname>.so` from this unit instead of compiling it into
             libappmodules.so: a library's own native library (Gradle's `externalNativeBuild`),
             which its Java loads by name.
+        defines: Preprocessor definitions for a `soname` unit.
+        links: For a `soname` unit, other native libraries it links (without `lib`/`.so`): another
+            unit's soname, whose includes and exported includes it also gets, or a library from
+            an AAR (prefab).
+        exported_trees: For a `soname` unit, tree artifacts holding `exported_includes`.
+        exported_includes: For a `soname` unit, exec paths of include roots that units linking it
+            compile against (its prefab headers), on top of its `includes`.
 
     Returns:
         struct, safe to put in a depset.
@@ -78,6 +89,10 @@ def appmodules_unit(
         component_descriptors = tuple(component_descriptors),
         cxx_modules = tuple([struct(cls = c, header = h) for c, h in sorted(cxx_modules.items())]),
         soname = soname,
+        defines = tuple(defines),
+        links = tuple(links),
+        exported_trees = tuple(exported_trees),
+        exported_includes = tuple(exported_includes),
     )
 
 AndroidMavenSetInfo = provider(
@@ -190,6 +205,32 @@ def merge_android_infos(
         maven_runtime = depset(maven_runtime, transitive = [i.maven_runtime for i in infos]),
     )
 
+# Artifacts whose native libraries React Native's own code is linked against. Other AARs sometimes
+# ship their own build of the same files (react-native-mmkv's MMKV ships libc++_shared.so); React
+# Native's Gradle plugin `pickFirst`s those, which leaves the winner to dependency order.
+_REACT_NATIVE_NATIVE_ARTIFACTS = [
+    "com.facebook.fbjni:fbjni",
+    "com.facebook.hermes:hermes-android",
+    "com.facebook.react:react-android",
+]
+
+def pick_native_libs(native_libs):
+    """Drops other artifacts' copies of a native library that React Native's own artifacts ship.
+
+    Args:
+        native_libs: list of struct(abi, file[, react_native]).
+
+    Returns:
+        The list, in the same order, without the shadowed copies. Differing copies of any other
+        library are all kept, for packaging to reject.
+    """
+    from_react_native = {(l.abi, l.file.basename): True for l in native_libs if getattr(l, "react_native", False)}
+    return [
+        l
+        for l in native_libs
+        if getattr(l, "react_native", False) or (l.abi, l.file.basename) not in from_react_native
+    ]
+
 def _dirname(path):
     return path[:path.rfind("/")]
 
@@ -237,8 +278,9 @@ def _android_maven_import_impl(ctx):
             r_txt = ctx.files.r_txt[0] if ctx.files.r_txt else None,
             manifest = ctx.file.manifest,
         ))
+        react_native = ":".join(ctx.attr.coordinate.split(":")[:2]) in _REACT_NATIVE_NATIVE_ARTIFACTS
         for f in ctx.files.native_libs:
-            native_libs.append(struct(abi = f.dirname.rsplit("/", 1)[1], file = f))
+            native_libs.append(struct(abi = f.dirname.rsplit("/", 1)[1], file = f, react_native = react_native))
         for f in ctx.files.assets:
             assets.append(struct(path = f.path[len(aar_root) + len("/assets/"):], file = f))
 

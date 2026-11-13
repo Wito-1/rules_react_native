@@ -101,10 +101,12 @@ function packageClasses(androidDir, javaDirs, android) {
 }
 
 
-// Just enough CMake to list what a library's CMakeLists.txt compiles: set(), file(GLOB[_RECURSE]),
-// add_library() and include directories. Conditionals are not evaluated (every branch counts),
-// sources under build/generated (codegen, which Bazel generates itself) and anything under
-// React Native's own tree (prefab headers stand in for it) are dropped.
+// Just enough CMake to list what a library's CMakeLists.txt compiles: set(), include(),
+// file(GLOB[_RECURSE]), add_library()/target_sources(), include directories, definitions, links,
+// and if()/elseif()/else() over variables (undefined ones are false; ReactAndroid_VERSION_MINOR is
+// the app's React Native minor version). Sources under build/generated (codegen, which Bazel
+// generates itself) and anything under React Native's own tree (prefab headers stand in for it)
+// are dropped.
 function cmakeCommands(text) {
   const commands = [];
   const re = /([A-Za-z_]\w*)\s*\(((?:[^()"]|"[^"]*"|\((?:[^()"]|"[^"]*")*\))*)\)/g;
@@ -141,49 +143,135 @@ function expandGlob(pattern, recursive) {
 
 const CMAKE_KEYWORDS = new Set(["SHARED", "STATIC", "MODULE", "PUBLIC", "PRIVATE", "INTERFACE", "CONFIGURE_DEPENDS", "SYSTEM", "BEFORE", "AFTER"]);
 
-function readCMake(file) {
+const FALSY = /^(0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|.*-NOTFOUND)?$/i;
+const TRUTHY = /^(1|ON|YES|TRUE|Y)$/i;
+
+function cmakeCondition(argv, vars) {
+  const value = (t) => (t in vars ? vars[t] : t);
+  const truthy = (t) => {
+    if (TRUTHY.test(t)) return true;
+    if (t in vars) return !FALSY.test(vars[t]);
+    return false;
+  };
+  const evalAt = (tokens) => {
+    if (tokens.length === 0) return true;
+    const or = tokens.indexOf("OR");
+    if (or > 0) return evalAt(tokens.slice(0, or)) || evalAt(tokens.slice(or + 1));
+    const and = tokens.indexOf("AND");
+    if (and > 0) return evalAt(tokens.slice(0, and)) && evalAt(tokens.slice(and + 1));
+    if (tokens[0] === "NOT") return !evalAt(tokens.slice(1));
+    if (tokens[0] === "DEFINED") return tokens[1] in vars;
+    if (tokens.length === 3) {
+      const [a, op, b] = tokens;
+      const [x, y] = [value(a), value(b)];
+      const nums = [Number(x), Number(y)];
+      switch (op) {
+        case "STREQUAL": return x === y;
+        case "EQUAL": return nums[0] === nums[1];
+        case "GREATER": return nums[0] > nums[1];
+        case "GREATER_EQUAL": return nums[0] >= nums[1];
+        case "LESS": return nums[0] < nums[1];
+        case "LESS_EQUAL": return nums[0] <= nums[1];
+        case "VERSION_GREATER_EQUAL": return nums[0] >= nums[1];
+        default: return true;
+      }
+    }
+    if (tokens.length === 1) return truthy(tokens[0]);
+    return true;
+  };
+  return evalAt(argv);
+}
+
+function readCMake(file, reactNativeMinor) {
   const dir = path.dirname(file);
-  const vars = { CMAKE_CURRENT_SOURCE_DIR: dir, CMAKE_SOURCE_DIR: dir, PROJECT_SOURCE_DIR: dir };
+  const vars = {
+    CMAKE_CURRENT_SOURCE_DIR: dir,
+    CMAKE_SOURCE_DIR: dir,
+    PROJECT_SOURCE_DIR: dir,
+    ANDROID: "1",
+    ReactAndroid_VERSION_MINOR: String(reactNativeMinor),
+  };
   const subst = (s) => s.replace(/\$\{(\w+)\}/g, (_, v) => vars[v] ?? `\u0000${v}`);
   const values = (argv) =>
     argv.flatMap((a) => subst(a).split(";")).filter((a) => a !== "" && !CMAKE_KEYWORDS.has(a));
+  const known = (list) => list.filter((p) => !p.includes("\u0000"));
   const resolve = (p) => (path.isAbsolute(p) ? path.normalize(p) : path.join(dir, p));
   const libraries = {};
+  const library = (name) => (libraries[name] ??= { sources: [], includes: [], defines: [], links: [] });
   const globalIncludes = [];
+  const globalDefines = [];
   const codegenDirs = new Set();
-  for (const { name, argv } of cmakeCommands(fs.readFileSync(file, "utf8"))) {
-    if (name === "project" && argv[0]) {
-      vars.PROJECT_NAME = argv[0];
-    } else if (name === "set" && argv.length) {
-      vars[argv[0]] = values(argv.slice(1)).join(";");
-    } else if (name === "file" && /^GLOB(_RECURSE)?$/.test(argv[0])) {
-      const recursive = argv[0] === "GLOB_RECURSE";
-      const patterns = values(argv.slice(2)).filter((p) => !p.includes("\u0000"));
-      for (const p of patterns) {
-        const m = resolve(p).split(path.sep).join("/").match(/build\/generated\/source\/codegen\/jni\/?(.*)$/);
-        if (m) {
-          // Codegen output the library compiles; recursive globs take all of it.
-          codegenDirs.add(recursive ? "**" : path.posix.dirname(m[1] || "x") || ".");
-        }
+  const seen = new Set();
+
+  const run = (cmakeFile) => {
+    if (seen.has(cmakeFile) || !fs.existsSync(cmakeFile)) return;
+    seen.add(cmakeFile);
+    // [taking this branch, some branch already taken]
+    const branches = [];
+    const active = () => branches.every(([taking]) => taking);
+    for (const { name, argv } of cmakeCommands(fs.readFileSync(cmakeFile, "utf8"))) {
+      if (name === "if") {
+        const taking = active() && cmakeCondition(argv.map((a) => a.replace(/\$\{(\w+)\}/g, (_, v) => vars[v] ?? "")), vars);
+        branches.push([taking, taking]);
+        continue;
       }
-      vars[argv[1]] = patterns.flatMap((p) => expandGlob(resolve(p), recursive)).join(";");
-    } else if (name === "add_library" && argv.length) {
-      const target = subst(argv[0]);
-      libraries[target] ??= { sources: [], includes: [] };
-      libraries[target].sources.push(...values(argv.slice(1)).filter((p) => !p.includes("\u0000")).map(resolve));
-    } else if (name === "target_include_directories" && argv.length) {
-      const target = subst(argv[0]);
-      libraries[target] ??= { sources: [], includes: [] };
-      libraries[target].includes.push(...values(argv.slice(1)).filter((p) => !p.includes("\u0000")).map(resolve));
-    } else if (name === "include_directories") {
-      globalIncludes.push(...values(argv).filter((p) => !p.includes("\u0000")).map(resolve));
+      if (name === "elseif" || name === "else") {
+        const top = branches.pop() ?? [false, false];
+        const parentActive = active();
+        const taking = parentActive && !top[1] && (name === "else" || cmakeCondition(argv, vars));
+        branches.push([taking, top[1] || taking]);
+        continue;
+      }
+      if (name === "endif") {
+        branches.pop();
+        continue;
+      }
+      if (!active()) continue;
+      if (name === "project" && argv[0]) {
+        vars.PROJECT_NAME = argv[0];
+      } else if (name === "set" && argv.length) {
+        vars[argv[0]] = values(argv.slice(1)).join(";");
+      } else if (name === "include" && argv.length) {
+        // Relative paths in an included file still resolve against this directory.
+        run(resolve(subst(argv[0])));
+      } else if (name === "file" && /^GLOB(_RECURSE)?$/.test(argv[0])) {
+        const recursive = argv[0] === "GLOB_RECURSE";
+        let rest = argv.slice(2);
+        const relative = rest.indexOf("RELATIVE");
+        if (relative >= 0) rest = [...rest.slice(0, relative), ...rest.slice(relative + 2)];
+        const patterns = known(values(rest));
+        for (const p of patterns) {
+          const m = resolve(p).split(path.sep).join("/").match(/build\/generated\/source\/codegen\/jni\/?(.*)$/);
+          if (m) {
+            // Codegen output the library compiles; recursive globs take all of it.
+            codegenDirs.add(recursive ? "**" : path.posix.dirname(m[1] || "x") || ".");
+          }
+        }
+        vars[argv[1]] = patterns.flatMap((p) => expandGlob(resolve(p), recursive || p.includes("**"))).join(";");
+      } else if ((name === "add_library" || name === "target_sources") && argv.length) {
+        library(subst(argv[0])).sources.push(...known(values(argv.slice(1))).map(resolve));
+      } else if (name === "target_include_directories" && argv.length) {
+        library(subst(argv[0])).includes.push(...known(values(argv.slice(1))).map(resolve));
+      } else if (name === "include_directories") {
+        globalIncludes.push(...known(values(argv)).map(resolve));
+      } else if (name === "add_definitions" || name === "add_compile_definitions") {
+        globalDefines.push(...known(values(argv)));
+      } else if (name === "target_compile_definitions" && argv.length) {
+        library(subst(argv[0])).defines.push(...known(values(argv.slice(1))));
+      } else if (name === "target_link_libraries" && argv.length) {
+        library(subst(argv[0])).links.push(...known(values(argv.slice(1))));
+      }
     }
-  }
+  };
+  run(file);
+
   const keep = (p) => !p.includes(`${path.sep}build${path.sep}generated`) && fs.existsSync(p);
   return Object.entries(libraries).map(([name, lib]) => ({
     name,
     sources: [...new Set(lib.sources)].filter(keep).filter((p) => /\.(c|cc|cpp)$/.test(p)),
     includes: [...new Set([...lib.includes, ...globalIncludes])].filter(keep),
+    defines: [...new Set([...globalDefines, ...lib.defines].map((d) => d.replace(/^-D/, "")))],
+    links: [...new Set(lib.links)],
     codegenDirs: codegenDirs.has("**") ? null : [...codegenDirs].sort(),
   }));
 }
@@ -192,7 +280,13 @@ function readCMake(file) {
 // sourceSets (srcDirs/directories.add), minus old-architecture ones. Pairs like svg/ and nosvg/
 // (optional integrations) follow whether the app depends on the matching react-native-* package.
 function sourceSetDirs(gradle, androidDir, appDeps) {
-  const named = [...gradle.matchAll(/["']((?:src\/|[\w-]+\/src\/)[\w/.-]+)["']/g)].map((m) => m[1]);
+  const named = [
+    ...[...gradle.matchAll(/["']((?:src\/|[\w-]+\/src\/)[\w/.-]+)["']/g)].map((m) => m[1]),
+    // Generated sources outside android/, e.g. Nitro's "${project.projectDir}/../nitrogen/...".
+    ...[...gradle.matchAll(/["']\$\{(?:project\.)?projectDir\}\/([\w/.-]+)["']/g)]
+      .map((m) => path.posix.normalize(m[1]))
+      .filter((d) => /(^|\/)(java|kotlin)$/.test(d)),
+  ];
   let dirs = [...new Set([...JAVA_DIRS, ...named])].filter(
     (d) => !/paper|oldarch|old_arch|\/res\b|\/assets\b|jni|cpp|AndroidManifest/.test(d) && fs.existsSync(path.join(androidDir, d)),
   );
@@ -255,11 +349,41 @@ function resDirs(androidDir) {
     .map((c) => `src/main/res/${c}`);
 }
 
+// build.gradle plus the scripts it applies (`apply from: "..."`), e.g. Nitro's generated
+// <Lib>+autolinking.gradle, which adds source sets.
+function readGradle(file, seen = new Set()) {
+  if (seen.has(file) || !fs.existsSync(file)) return "";
+  seen.add(file);
+  const text = fs.readFileSync(file, "utf8");
+  const applied = [...text.matchAll(/apply\s+from\s*:\s*["']([^"']+)["']/g)]
+    .map((m) => path.resolve(path.dirname(file), m[1].replace(/\$\{(?:project\.)?projectDir\}/, path.dirname(file))))
+    .map((f) => readGradle(f, seen));
+  return [text, ...applied].join("\n");
+}
+
+// Headers a library publishes through prefab for other libraries' native code: the Copy task that
+// fills a `prefab { X { headers "<buildDir>/headers/..." } }` directory, e.g. Nitro's
+// `from fileTree('../cpp/') ... into "${project.buildDir}/headers/nitromodules/NitroModules/"`.
+// Returns {prefix: [source directories, absolute]}.
+function prefabHeaders(gradle, androidDir) {
+  if (!/prefab\s*\{[\s\S]*?headers\s/.test(gradle)) return {};
+  const out = {};
+  for (const task of gradle.matchAll(/tasks\.register\(\s*["']\w+["']\s*,\s*Copy\s*\)\s*\{([\s\S]*?)\n\}/g)) {
+    const into = task[1].match(/into\s*\(?\s*["'][^"']*\/headers\/[^"']*?\/([\w.-]+)\/?["']/);
+    if (!into) continue;
+    const dirs = [...task[1].matchAll(/from\s*\(?\s*fileTree\s*\(\s*["']([^"']+)["']/g)]
+      .map((m) => path.resolve(androidDir, m[1]))
+      .filter((d) => fs.existsSync(d));
+    if (dirs.length) out[into[1]] = [...new Set([...(out[into[1]] ?? []), ...dirs])];
+  }
+  return out;
+}
+
 function targetName(npmPackage) {
   return "npm_" + npmPackage.replace(/^@/, "").replace(/[^A-Za-z0-9]+/g, "_");
 }
 
-function describe(name, pkgDir, appDeps) {
+function describe(name, pkgDir, appDeps, reactNativeMinor) {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
   const platforms = loadConfig(pkgDir);
   if (platforms.android === null) {
@@ -271,9 +395,8 @@ function describe(name, pkgDir, appDeps) {
   if (!exists(androidDir, "build.gradle") && !exists(androidDir, "build.gradle.kts")) {
     return null;
   }
-  const gradle = fs.readFileSync(
+  const gradle = readGradle(
     [path.join(androidDir, "build.gradle"), path.join(androidDir, "build.gradle.kts")].find(fs.existsSync),
-    "utf8",
   );
 
   const javaDirs = sourceSetDirs(gradle, androidDir, appDeps);
@@ -288,7 +411,7 @@ function describe(name, pkgDir, appDeps) {
     npmPackage: name,
     target: targetName(name),
     package: namespace,
-    javaDirs: javaDirs.map((d) => `${androidRel}/${d}`),
+    javaDirs: javaDirs.map((d) => path.posix.normalize(`${androidRel}/${d}`)),
     manifest: exists(androidDir, "src/main/AndroidManifest.xml") ? `${androidRel}/src/main/AndroidManifest.xml` : "",
     resDirs: resDirs(androidDir).map((d) => `${androidRel}/${d}`),
     buildConfig: /buildConfigField|buildConfig\s*(=\s*)?true/.test(gradle),
@@ -302,9 +425,19 @@ function describe(name, pkgDir, appDeps) {
     ccIncludes: [],
     sharedLibraries: {},
     sharedLibraryIncludes: {},
+    sharedLibraryDefines: {},
+    sharedLibraryLinks: {},
+    prefabHeaders: {},
     cxxModules: {},
     maven: mavenDeps(gradle),
-    libraryDeps: [...new Set([...gradle.matchAll(/it\.name\s*==\s*["']([\w@/.-]+)["']/g)].map((m) => m[1]))]
+    libraryDeps: [
+      ...new Set(
+        [
+          ...gradle.matchAll(/it\.name\s*==\s*["']([\w@/.-]+)["']/g),
+          ...gradle.matchAll(/project\s*\(\s*["']:([\w@/.-]+)["']\s*\)/g),
+        ].map((m) => m[1]),
+      ),
+    ]
       .filter((d) => appDeps.has(d) && d !== name)
       .sort(),
   };
@@ -323,21 +456,37 @@ function describe(name, pkgDir, appDeps) {
   // Gradle's autolinking (here: compiled into libappmodules.so).
   const autolinked = path.join(androidDir, android.cmakeListsPath ?? "src/main/jni/CMakeLists.txt");
   if (fs.existsSync(autolinked)) {
-    for (const l of readCMake(autolinked)) {
+    for (const l of readCMake(autolinked, reactNativeMinor)) {
       lib.ccSrcs.push(...l.sources.map(rel));
       lib.ccIncludes.push(...l.includes.map(rel));
       if (l.codegenDirs) lib.codegenCcDirs = l.codegenDirs;
     }
   }
   // The library's own externalNativeBuild builds .so files its Java loads by name.
-  const own = gradle.match(/externalNativeBuild\s*\{\s*cmake\s*\{[^}]*?path\s*=?\s*\(?\s*["']([^"']+)["']/);
+  const own = gradle.match(
+    /externalNativeBuild\s*\{\s*cmake\s*\{[^}]*?path\s*=?\s*\(?\s*(?:file\s*\(\s*)?["']([^"']+)["']/,
+  );
   if (own) {
     const file = path.join(androidDir, own[1]);
     if (path.resolve(file) !== path.resolve(autolinked) && fs.existsSync(file)) {
-      for (const l of readCMake(file)) {
+      for (const l of readCMake(file, reactNativeMinor)) {
         if (l.sources.length === 0) continue;
         lib.sharedLibraries[l.name] = l.sources.map(rel);
         lib.sharedLibraryIncludes[l.name] = l.includes.map(rel);
+        const defines = l.defines.filter((d) => !d.startsWith("FOLLY_"));
+        if (defines.length) lib.sharedLibraryDefines[l.name] = defines;
+        // Other native libraries it links: another npm library's (`pkg::Name`) or a prefab from a
+        // Maven AAR (`mmkv::mmkv`). React Native's, fbjni, log and android are always linked.
+        const links = l.links
+          .filter((x) => !/^(ReactAndroid|fbjni)::/.test(x) && !/^(android|log|\$\{.*\})$/.test(x) && !x.startsWith("-"))
+          .map((x) => x.split("::").pop())
+          .filter((x) => !/^(LOG_LIB|jsi|reactnative|fbjni|c\+\+_shared)$/.test(x));
+        if (links.length) lib.sharedLibraryLinks[l.name] = links;
+      }
+      if (Object.keys(lib.sharedLibraries).length) {
+        for (const [prefix, dirs] of Object.entries(prefabHeaders(gradle, androidDir))) {
+          lib.prefabHeaders[prefix] = dirs.map(rel).sort();
+        }
       }
     }
   }
@@ -416,12 +565,15 @@ function render(libs, label, maven) {
     }
     a("npm_package", `node_modules + "/${lib.npmPackage}"`);
     a("package", JSON.stringify(lib.package));
+    if (Object.keys(lib.prefabHeaders).length) a("prefab_headers", starlarkDict(lib.prefabHeaders, 8));
     if (lib.proguard.length) a("proguard_specs", starlarkList(lib.proguard, 8));
     if (lib.reactPackages.length) a("react_packages", starlarkList(lib.reactPackages, 8));
     if (lib.resDirs.length) a("res_dirs", starlarkList(lib.resDirs, 8));
     if (Object.keys(lib.sharedLibraries).length) {
       a("shared_libraries", starlarkDict(lib.sharedLibraries, 8));
+      if (Object.keys(lib.sharedLibraryDefines).length) a("shared_library_defines", starlarkDict(lib.sharedLibraryDefines, 8));
       a("shared_library_includes", starlarkDict(lib.sharedLibraryIncludes, 8));
+      if (Object.keys(lib.sharedLibraryLinks).length) a("shared_library_links", starlarkDict(lib.sharedLibraryLinks, 8));
     }
     lines.push("    react_native_npm_library(", ...attrs, "        **kwargs", "    )");
   }
@@ -433,6 +585,8 @@ function main() {
   const packageJson = path.resolve(args["package-json"]);
   const app = JSON.parse(fs.readFileSync(packageJson, "utf8"));
   const appRequire = createRequire(packageJson);
+  const rnPackage = JSON.parse(fs.readFileSync(appRequire.resolve("react-native/package.json"), "utf8"));
+  const reactNativeMinor = Number(rnPackage.version.split(".")[1]);
   const libs = [];
   for (const name of Object.keys(app.dependencies ?? {}).sort()) {
     if (name === "react-native" || name === "react") continue;
@@ -443,7 +597,7 @@ function main() {
       // Packages whose `exports` hide package.json: find the directory through node_modules.
       pkgDir = fs.realpathSync(path.join(path.dirname(packageJson), "node_modules", name));
     }
-    const lib = describe(name, pkgDir, new Set(Object.keys(app.dependencies ?? {})));
+    const lib = describe(name, pkgDir, new Set(Object.keys(app.dependencies ?? {})), reactNativeMinor);
     if (lib) libs.push(lib);
   }
   const text = render(libs, args.label, args.maven);
