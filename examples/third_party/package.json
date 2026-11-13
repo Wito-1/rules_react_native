@@ -4,13 +4,13 @@
   "main": "index.js",
   "dependencies": {
     "@babel/runtime": "^7.28.4",
-    "react": "19.2.4",
-    "react-native": "0.87.1",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
     "react-native-safe-area-context": "5.10.1"
   },
   "devDependencies": {
-    "@react-native/babel-preset": "0.87.1",
-    "@react-native/metro-config": "0.87.1",
-    "@types/react": "^19.2.2"
+    "@react-native/babel-preset": "0.88.1",
+    "@react-native/metro-config": "0.88.1",
+    "@types/react": "^19.3.0"
   }
 }

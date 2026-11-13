@@ -189,7 +189,7 @@
       "api_deps": [
         "androidx_collection_collection_jvm"
       ],
-      "coordinate": "androidx.collection:collection:1.4.2",
+      "coordinate": "androidx.collection:collection:1.4.4",
       "deps": [
         "androidx_collection_collection_jvm"
       ]
@@ -199,26 +199,26 @@
         "androidx_annotation_annotation",
         "org_jetbrains_kotlin_kotlin_stdlib"
       ],
-      "coordinate": "androidx.collection:collection-jvm:1.4.2",
+      "coordinate": "androidx.collection:collection-jvm:1.4.4",
       "deps": [
         "androidx_annotation_annotation",
         "org_jetbrains_kotlin_kotlin_stdlib"
       ],
       "packaging": "jar",
-      "sha256": "984ce9bd780055eafb8a105aca3f514686bf7b1b6272ec7c645a98ce40fc7db4",
-      "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-jvm/1.4.2/collection-jvm-1.4.2.jar"
+      "sha256": "539a43428df8a337622fb781401f5f0cdcd52d8b3615f0085af51c90002ff333",
+      "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-jvm/1.4.4/collection-jvm-1.4.4.jar"
     },
     "androidx_collection_collection_ktx": {
       "api_deps": [
         "androidx_collection_collection"
       ],
-      "coordinate": "androidx.collection:collection-ktx:1.4.2",
+      "coordinate": "androidx.collection:collection-ktx:1.4.4",
       "deps": [
         "androidx_collection_collection"
       ],
       "packaging": "jar",
       "sha256": "c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3",
-      "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-ktx/1.4.2/collection-ktx-1.4.2.jar"
+      "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-ktx/1.4.4/collection-ktx-1.4.4.jar"
     },
     "androidx_concurrent_concurrent_futures": {
       "api_deps": [
@@ -1276,15 +1276,15 @@
     },
     "com_facebook_hermes_hermes_android": {
       "api_deps": [],
-      "coordinate": "com.facebook.hermes:hermes-android:250829098.0.17",
+      "coordinate": "com.facebook.hermes:hermes-android:260318099.0.5",
       "deps": [
         "androidx_annotation_annotation",
         "com_facebook_fbjni_fbjni",
         "com_facebook_yoga_proguard_annotations"
       ],
       "packaging": "aar",
-      "sha256": "2a2f6431807d46cb6c5cd16e1f96c4a033dd76756b641e1901462bded6b1ed61",
-      "url": "https://repo1.maven.org/maven2/com/facebook/hermes/hermes-android/250829098.0.17/hermes-android-250829098.0.17-debug.aar"
+      "sha256": "4dcdb4a0c518e4866ac40afc7c067d5efa3727782e6ca3da8284ff70466bd02c",
+      "url": "https://repo1.maven.org/maven2/com/facebook/hermes/hermes-android/260318099.0.5/hermes-android-260318099.0.5-debug.aar"
     },
     "com_facebook_infer_annotation_infer_annotation": {
       "api_deps": [
@@ -1323,7 +1323,7 @@
         "javax_inject_javax_inject",
         "org_jetbrains_kotlin_kotlin_stdlib"
       ],
-      "coordinate": "com.facebook.react:react-android:0.87.1",
+      "coordinate": "com.facebook.react:react-android:0.88.1",
       "deps": [
         "androidx_appcompat_appcompat",
         "androidx_appcompat_appcompat_resources",
@@ -1348,8 +1348,8 @@
         "org_jetbrains_kotlin_kotlin_stdlib"
       ],
       "packaging": "aar",
-      "sha256": "30708dc783c3ae9f9c6f0ccb84af64f22617ecf527de945a2a9faef2a0069395",
-      "url": "https://repo1.maven.org/maven2/com/facebook/react/react-android/0.87.1/react-android-0.87.1-debug.aar"
+      "sha256": "6b249cbfeaca37b40ce12cb5b416aa85e65515bb613b23caf60cef0296db6570",
+      "url": "https://repo1.maven.org/maven2/com/facebook/react/react-android/0.88.1/react-android-0.88.1-debug.aar"
     },
     "com_facebook_soloader_annotation": {
       "api_deps": [],

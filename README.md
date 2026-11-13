@@ -418,8 +418,8 @@ A spec lists the roots and the build type:
 ```json
 {
   "artifacts": [
-    "com.facebook.react:react-android:0.87.1",
-    "com.facebook.hermes:hermes-android:250829098.0.17"
+    "com.facebook.react:react-android:0.88.1",
+    "com.facebook.hermes:hermes-android:260318099.0.5"
   ],
   "build_type": "release",
   "excludes": []
