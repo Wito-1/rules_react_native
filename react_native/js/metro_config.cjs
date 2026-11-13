@@ -75,14 +75,15 @@ function linkRoots(projectRoot) {
 async function loadMetroConfig(projectRoot, { hermetic }) {
   const req = appRequires(projectRoot);
   const { loadConfig, mergeConfig } = req.cli("metro");
-  const { getDefaultConfig } = req.app("@react-native/metro-config");
-
   const userConfigPath = ["metro.config.js", "metro.config.cjs"]
     .map((f) => path.join(projectRoot, f))
     .find((f) => fs.existsSync(f));
+  // An app with its own config (e.g. expo/metro-config's) needn't depend on @react-native/metro-config.
   const baseConfig = userConfigPath
     ? await loadConfig({ cwd: projectRoot, config: userConfigPath })
-    : getDefaultConfig(projectRoot);
+    : req.app("@react-native/metro-config").getDefaultConfig(projectRoot);
+  const initializeCore = () => req.app.resolve("react-native/Libraries/Core/InitializeCore");
+  const baseRunBeforeMain = baseConfig.serializer?.getModulesRunBeforeMainModule;
   const overrides = {
     projectRoot,
     // metro's loadConfig() prepends projectRoot to watchFolders; getDefaultConfig() alone does not.
@@ -97,7 +98,17 @@ async function loadMetroConfig(projectRoot, { hermetic }) {
     serializer: {
       // @react-native/metro-config resolves this from its own location, which only works when
       // react-native is hoisted next to it.
-      getModulesRunBeforeMainModule: () => [req.app.resolve("react-native/Libraries/Core/InitializeCore")],
+      // A config that resolves its own list (Expo's adds its runtime) keeps it when it can.
+      getModulesRunBeforeMainModule: (entryFilePath) => {
+        if (baseRunBeforeMain) {
+          try {
+            return baseRunBeforeMain(entryFilePath);
+          } catch {
+            // Falls through to the app's react-native.
+          }
+        }
+        return [initializeCore()];
+      },
     },
   };
   if (hermetic) {
@@ -109,4 +120,4 @@ async function loadMetroConfig(projectRoot, { hermetic }) {
   return { config: mergeConfig(baseConfig, overrides), req };
 }
 
-module.exports = { appRequires, loadMetroConfig };
+module.exports = { appRequires, linkRoots, loadMetroConfig };

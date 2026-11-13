@@ -116,7 +116,10 @@ def _merge_manifests(ctx, libraries):
     merged = ctx.actions.declare_file(ctx.label.name + "/AndroidManifest.xml")
     args = ctx.actions.args()
     args.add("--main", qualified)
-    lib_manifests = [lib.manifest for lib in libraries]
+    # The merger gives libraries listed first priority, as AGP lists them: dependents before their
+    # dependencies, so a library's `tools:replace` wins over what it depends on (expo-modules-core's
+    # com.facebook.soloader.enabled over SoLoader's own). `libraries` is postorder, for aapt2's overlays.
+    lib_manifests = [lib.manifest for lib in reversed(libraries)]
     if lib_manifests:
         args.add_joined("--libs", lib_manifests, join_with = ":")
     args.add("--property", "PACKAGE=" + _application_id(ctx))

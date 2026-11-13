@@ -37,6 +37,13 @@ def main() -> int:
         help="Path under assets/ that must exist",
     )
     parser.add_argument("--entry", action="append", default=[], help="Any other path that must exist in the APK")
+    parser.add_argument(
+        "--class",
+        dest="classes",
+        action="append",
+        default=[],
+        help="A Java class (e.g. expo.modules.ExpoModulesPackageList) the APK's dex files must define or reference",
+    )
     parser.add_argument("--aab", help="The app's bundle, checked as well")
     parser.add_argument("--bundletool_classpath", action="append", default=[])
     args = parser.parse_args()
@@ -106,6 +113,12 @@ def main() -> int:
     for entry in args.entry:
         if entry not in infos:
             failures.append(f"missing {entry}")
+    if args.classes:
+        with zipfile.ZipFile(args.apk) as apk:
+            dex = b"".join(apk.read(n) for n in infos if re.fullmatch(r"classes\d*\.dex", n))
+        for cls in args.classes:
+            if f"L{cls.replace('.', '/')};".encode() not in dex:
+                failures.append(f"no class {cls} in the dex files")
 
     if args.aab:
         failures.extend(_check_bundle(args))

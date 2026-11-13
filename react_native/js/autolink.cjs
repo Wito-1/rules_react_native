@@ -7,6 +7,7 @@
 //   bazel test //app:autolink_test     fails when that file is out of date
 "use strict";
 
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const { createRequire } = require("node:module");
 const path = require("node:path");
@@ -310,13 +311,29 @@ function sourceSetDirs(gradle, androidDir, appDeps) {
 const ALWAYS_DECLARED = new Set(["IS_NEW_ARCHITECTURE_ENABLED", "IS_HERMES_ENABLED"]);
 const ZERO = { boolean: "false", int: "0", long: "0L", float: "0f", double: "0d", String: "null" };
 
+// String values build.gradle assigns once at top level: `def x = "1.0"`, `ext.x = "1.0"`,
+// `versionName "1.0"`, `version = '1.0'`. Enough to resolve `${x}` in coordinates and BuildConfig.
+function gradleVariables(gradle) {
+  const vars = {};
+  for (const m of gradle.matchAll(/^\s*(?:def\s+|ext\.)?(\w+)\s*=?\s*["']([^"'$\n]*)["']\s*$/gm)) {
+    if (!(m[1] in vars)) vars[m[1]] = m[2];
+  }
+  return vars;
+}
+
+function substGradle(text, vars) {
+  return text.replace(/\$\{(\w+)\}|\$(\w+)/g, (all, a, b) => vars[a ?? b] ?? all);
+}
+
 function buildConfigConstants(gradle) {
+  const vars = gradleVariables(gradle);
   const constants = {};
   for (const m of gradle.matchAll(/buildConfigField\s*\(?\s*["'](\w+)["']\s*,\s*["'](\w+)["']\s*,\s*([^\n)]*)/g)) {
     const [, type, name, raw] = m;
     if (ALWAYS_DECLARED.has(name)) continue;
-    const literal = raw.trim().match(/^["']([^"'$]*)["']$/);
-    constants[name] = `${type} ${literal ? literal[1] : ZERO[type] ?? "null"}`;
+    // A Groovy string holding a Java expression: "true", or "\"1.0\"" for a Java string.
+    const literal = substGradle(raw.trim(), vars).match(/^(["'])((?:\\.|(?!\1)[^\\$])*)\1$/);
+    constants[name] = `${type} ${literal ? literal[2].replace(/\\(["'\\])/g, "$1") : ZERO[type] ?? "null"}`;
   }
   return constants;
 }
@@ -324,15 +341,22 @@ function buildConfigConstants(gradle) {
 // Gradle `implementation`/`api` Maven coordinates. React Native itself and the Kotlin stdlib come
 // with react-android.
 function mavenDeps(gradle) {
+  const vars = gradleVariables(gradle);
   const deps = new Map();
-  for (const m of gradle.matchAll(/^\s*(?:implementation|api)\s*\(?\s*["']([\w.-]+):([\w.-]+)(?::([^"']*))?["']/gm)) {
-    const [, group, artifact, version] = m;
+  for (const m of gradle.matchAll(/^\s*(implementation|api)\s*\(?\s*["']([\w.-]+):([\w.-]+)(?::([^"']*))?["']/gm)) {
+    const [, configuration, group, artifact, raw] = m;
     if (group === "com.facebook.react" || (group === "org.jetbrains.kotlin" && artifact.startsWith("kotlin-stdlib"))) {
       continue;
     }
-    deps.set(`${group}:${artifact}`, version && !version.includes("$") && version !== "+" ? version : null);
+    // A classifier/type (`:cpp@zip`) is a build input of the library's own, not a dependency.
+    if (raw?.includes("@")) continue;
+    const version = raw && substGradle(raw, vars);
+    deps.set(`${group}:${artifact}`, {
+      version: version && !version.includes("$") && version !== "+" ? version : null,
+      api: configuration === "api",
+    });
   }
-  return [...deps].sort().map(([coordinate, version]) => ({ coordinate, version }));
+  return [...deps].sort().map(([coordinate, d]) => ({ coordinate, ...d }));
 }
 
 const RES_TYPES = /^(values|drawable|layout|mipmap|anim|animator|color|font|menu|raw|xml|interpolator|transition|navigation)(-|$)/;
@@ -379,18 +403,133 @@ function prefabHeaders(gradle, androidDir) {
   return out;
 }
 
+// kotlinc's version in react_native/android/maven_kotlin_spec.json: Kotlin compiler plugins are
+// built per compiler version.
+const KOTLINC_VERSION = "2.2.10";
+const EXPO_V2_COMPILER_PLUGIN = "io.github.expo:expo-modules-v2-compiler-plugin";
+
+// What `expo-modules-autolinking resolve -p android` reports for the app: the Expo modules its
+// dependencies (transitively) contain. Null when the app doesn't depend on expo.
+function resolveExpoModules(packageJson, appRequire) {
+  let expoPackageJson;
+  try {
+    expoPackageJson = appRequire.resolve("expo/package.json");
+  } catch {
+    return null;
+  }
+  const autolinking = path.join(
+    path.dirname(createRequire(expoPackageJson).resolve("expo-modules-autolinking/package.json")),
+    "bin/expo-modules-autolinking.js",
+  );
+  const result = spawnSync(process.execPath, [autolinking, "resolve", "--platform", "android", "--json"], {
+    cwd: path.dirname(packageJson),
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    fail(`expo-modules-autolinking resolve failed:\n${result.stderr}`);
+  }
+  return JSON.parse(result.stdout).modules;
+}
+
+function packageRoot(dir, name) {
+  for (let d = dir; d !== path.dirname(d); d = path.dirname(d)) {
+    const file = path.join(d, "package.json");
+    if (fs.existsSync(file) && JSON.parse(fs.readFileSync(file, "utf8")).name === name) return d;
+  }
+  fail(`no package.json named ${name} above ${dir}`);
+}
+
+// One react_native_npm_library per Expo module project, built as expo-module-gradle-plugin
+// configures it: compiled against expo-modules-core (and the Maven artifacts it exposes) with the
+// Expo Modules v2 compiler plugin. expo-modules-core packages its prebuilt native libraries.
+// `expo` depends on every other module, as Expo's autolinking arranges, because its
+// ExpoModulesV2ModuleList is filled in by the compiler plugin from its classpath.
+function describeExpo(modules, appDeps, reactNativeVersion, reactNativeMinor) {
+  // Optional parts of modules (expo-modules-core's Compose support) sit in Gradle conditionals on
+  // these; build.gradle isn't evaluated, so their dependencies are dropped here.
+  const coreFeatures = new Set(modules.flatMap((m) => m.coreFeatures ?? []));
+  const libs = [];
+  for (const m of modules) {
+    for (const project of m.projects ?? []) {
+      const androidDir = fs.realpathSync(project.sourceDir);
+      const pkgDir = packageRoot(androidDir, m.packageName);
+      const lib = describe(m.packageName, pkgDir, appDeps, reactNativeMinor, androidDir);
+      if (!lib) fail(`${m.packageName}: no Android project in ${androidDir}`);
+      if (m.projects.length > 1) lib.target = targetName(`${m.packageName}-${project.name}`);
+      lib.expo = { project, viaExpo: !appDeps.has(m.packageName) };
+      lib.reactPackages = m.packageName === "expo" ? ["expo.modules.ExpoModulesPackage"] : [];
+      lib.libraryDeps = [];
+      lib.javaDirs = lib.javaDirs.filter((d) => !/\/src\/compose$/.test(d));
+      const prebuilt = path.join(androidDir, "prebuilt/metadata.json");
+      if (fs.existsSync(prebuilt)) {
+        const metadata = JSON.parse(fs.readFileSync(prebuilt, "utf8"));
+        if (metadata.reactNativeVersion !== reactNativeVersion) {
+          fail(
+            `${m.packageName}'s prebuilt native libraries are for React Native ${metadata.reactNativeVersion}, ` +
+              `the app has ${reactNativeVersion}; building them from source is not supported`,
+          );
+        }
+        const rel = path.relative(pkgDir, path.join(androidDir, "prebuilt/native-libs.tar.xz")).split(path.sep).join("/");
+        lib.prebuiltNativeLibs = { [rel]: metadata.soFiles };
+        lib.sharedLibraries = {};
+        lib.ccSrcs = [];
+      }
+      if (!coreFeatures.has("compose")) lib.maven = lib.maven.filter((d) => !d.coordinate.startsWith("androidx.compose."));
+      lib.maven.push({ coordinate: "org.jetbrains:annotations", version: "23.0.0", api: false });
+      libs.push(lib);
+    }
+  }
+  const core = libs.find((l) => l.npmPackage === "expo-modules-core");
+  if (!core) fail("expo-modules-autolinking found no expo-modules-core");
+  const coreGradle = readGradle(path.join(fs.realpathSync(core.expo.project.sourceDir), "build.gradle"));
+  const v2 = gradleVariables(coreGradle).expoModulesV2Version;
+  if (!v2) fail("no expoModulesV2Version in expo-modules-core's build.gradle");
+  for (const lib of libs) {
+    if (lib !== core) {
+      lib.libraryDeps = ["expo-modules-core"];
+      // compileOnly(project(":expo-modules-core")) puts its `api` artifacts on the classpath.
+      for (const d of core.maven) {
+        if (d.api && !lib.maven.some((x) => x.coordinate === d.coordinate)) lib.maven.push(d);
+      }
+    }
+    if (lib.npmPackage === "expo") {
+      lib.libraryDeps = libs.filter((l) => l !== lib).map((l) => l.npmPackage);
+    }
+    lib.maven.sort((a, b) => a.coordinate.localeCompare(b.coordinate));
+    lib.kotlinPlugins = [{ coordinate: EXPO_V2_COMPILER_PLUGIN, version: `${v2}-${KOTLINC_VERSION}` }];
+  }
+  const packageList = {
+    packages: [],
+    modules: {},
+    services: [],
+  };
+  for (const m of modules) {
+    for (const project of m.projects ?? []) {
+      if (m.packageName !== "expo") packageList.packages.push(...project.packages);
+      for (const { classifier, name } of project.modules ?? []) packageList.modules[classifier] = name ?? "";
+      packageList.services.push(...(project.services ?? []));
+    }
+  }
+  return { libs, packageList };
+}
+
 function targetName(npmPackage) {
   return "npm_" + npmPackage.replace(/^@/, "").replace(/[^A-Za-z0-9]+/g, "_");
 }
 
-function describe(name, pkgDir, appDeps, reactNativeMinor) {
+function describe(name, pkgDir, appDeps, reactNativeMinor, expoAndroidDir = null) {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
-  const platforms = loadConfig(pkgDir);
+  // Expo modules are linked by Expo's autolinking, from the directory it resolved; their
+  // react-native.config.js (expo's own) is for React Native's.
+  const platforms = expoAndroidDir ? {} : loadConfig(pkgDir);
   if (platforms.android === null) {
     return null;
   }
   const android = platforms.android ?? {};
-  const androidRel = android.sourceDir ?? "android";
+  const androidRel = expoAndroidDir
+    ? path.relative(pkgDir, expoAndroidDir).split(path.sep).join("/")
+    : (android.sourceDir ?? "android");
   const androidDir = path.join(pkgDir, androidRel);
   if (!exists(androidDir, "build.gradle") && !exists(androidDir, "build.gradle.kts")) {
     return null;
@@ -510,7 +649,11 @@ function starlarkDict(obj, indent) {
   return `{\n${keys.map((k) => `${pad}${JSON.stringify(k)}: ${value(obj[k])},`).join("\n")}\n${" ".repeat(indent)}}`;
 }
 
-function render(libs, label, maven) {
+function mavenLabel(coordinate) {
+  return `maven + "//:${coordinate.replace(/[^A-Za-z0-9_]/g, "_")}"`;
+}
+
+function render(libs, label, maven, expoPackageList) {
   const lines = [
     `"""React Native libraries from npm, generated by \`bazel run ${label}\`. Do not edit.`,
     "",
@@ -518,7 +661,9 @@ function render(libs, label, maven) {
     `\`${label}_test\` fails while this file is stale.`,
     '"""',
     "",
-    'load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_npm_library")',
+    expoPackageList
+      ? 'load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_expo_package_list", "react_native_npm_library")'
+      : 'load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_npm_library")',
     "",
     `def react_native_libraries(node_modules = ":node_modules", maven = ${JSON.stringify(maven)}, **kwargs):`,
     '    """Declares one react_native_npm_library per native dependency; returns their labels for the app\'s deps."""',
@@ -560,11 +705,21 @@ function render(libs, label, maven) {
     if (lib.maven.length) {
       a(
         "maven_deps",
-        `[\n${lib.maven.map((d) => `            maven + "//:${d.coordinate.replace(/[^A-Za-z0-9_]/g, "_")}",`).join("\n")}\n        ]`,
+        `[\n${lib.maven.map((d) => `            ${mavenLabel(d.coordinate)},`).join("\n")}\n        ]`,
       );
     }
-    a("npm_package", `node_modules + "/${lib.npmPackage}"`);
+    if (lib.kotlinPlugins?.length) {
+      a("kotlin_plugins", `[\n${lib.kotlinPlugins.map((d) => `            ${mavenLabel(d.coordinate)},`).join("\n")}\n        ]`);
+    }
+    if (lib.expo?.viaExpo) {
+      // Expo's own modules come with the expo package; they have no link target of their own.
+      a("npm_package", `node_modules + "/expo"`);
+      a("npm_package_name", JSON.stringify(lib.npmPackage));
+    } else {
+      a("npm_package", `node_modules + "/${lib.npmPackage}"`);
+    }
     a("package", JSON.stringify(lib.package));
+    if (lib.prebuiltNativeLibs) a("prebuilt_native_libs", starlarkDict(lib.prebuiltNativeLibs, 8));
     if (Object.keys(lib.prefabHeaders).length) a("prefab_headers", starlarkDict(lib.prefabHeaders, 8));
     if (lib.proguard.length) a("proguard_specs", starlarkList(lib.proguard, 8));
     if (lib.reactPackages.length) a("react_packages", starlarkList(lib.reactPackages, 8));
@@ -577,7 +732,22 @@ function render(libs, label, maven) {
     }
     lines.push("    react_native_npm_library(", ...attrs, "        **kwargs", "    )");
   }
-  lines.push("    return [", ...libs.map((l) => `        ":${l.target}",`), "    ]", "");
+  const targets = libs.map((l) => l.target);
+  if (expoPackageList) {
+    const expoTargets = libs.filter((l) => l.expo).map((l) => `:${l.target}`);
+    lines.push(
+      "    react_native_expo_package_list(",
+      '        name = "expo_package_list",',
+      `        deps = ${starlarkList(expoTargets, 8)},`,
+      `        modules = ${starlarkDict(expoPackageList.modules, 8)},`,
+      `        packages = ${starlarkList(expoPackageList.packages, 8)},`,
+      `        services = ${starlarkList(expoPackageList.services, 8)},`,
+      "        **kwargs",
+      "    )",
+    );
+    targets.push("expo_package_list");
+  }
+  lines.push("    return [", ...targets.map((t) => `        ":${t}",`), "    ]", "");
   return lines.join("\n");
 }
 
@@ -587,9 +757,13 @@ function main() {
   const appRequire = createRequire(packageJson);
   const rnPackage = JSON.parse(fs.readFileSync(appRequire.resolve("react-native/package.json"), "utf8"));
   const reactNativeMinor = Number(rnPackage.version.split(".")[1]);
+  const appDeps = new Set(Object.keys(app.dependencies ?? {}));
+  const expoModules = resolveExpoModules(packageJson, appRequire);
+  const expo = expoModules ? describeExpo(expoModules, appDeps, rnPackage.version, reactNativeMinor) : null;
+  const expoPackages = new Set(expo ? expo.libs.map((l) => l.npmPackage) : []);
   const libs = [];
   for (const name of Object.keys(app.dependencies ?? {}).sort()) {
-    if (name === "react-native" || name === "react") continue;
+    if (name === "react-native" || name === "react" || expoPackages.has(name)) continue;
     let pkgDir;
     try {
       pkgDir = fs.realpathSync(path.dirname(appRequire.resolve(`${name}/package.json`)));
@@ -597,10 +771,12 @@ function main() {
       // Packages whose `exports` hide package.json: find the directory through node_modules.
       pkgDir = fs.realpathSync(path.join(path.dirname(packageJson), "node_modules", name));
     }
-    const lib = describe(name, pkgDir, new Set(Object.keys(app.dependencies ?? {})), reactNativeMinor);
+    const lib = describe(name, pkgDir, appDeps, reactNativeMinor);
     if (lib) libs.push(lib);
   }
-  const text = render(libs, args.label, args.maven);
+  if (expo) libs.push(...expo.libs);
+  libs.sort((a, b) => a.target.localeCompare(b.target));
+  const text = render(libs, args.label, args.maven, expo?.packageList);
 
   if (args.check) {
     const current = fs.readFileSync(args.check, "utf8");
@@ -616,7 +792,7 @@ function main() {
   console.log(`wrote ${args.out}: ${libs.map((l) => l.npmPackage).join(", ") || "no native libraries"}`);
   const maven = new Map();
   for (const lib of libs) {
-    for (const d of lib.maven) {
+    for (const d of [...lib.maven, ...(lib.kotlinPlugins ?? [])]) {
       if (!maven.has(d.coordinate) || d.version) maven.set(d.coordinate, d.version);
     }
   }

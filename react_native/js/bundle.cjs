@@ -7,7 +7,8 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { parseArgs } = require("node:util");
-const { loadMetroConfig } = require("./metro_config.cjs");
+const { createRequire } = require("node:module");
+const { linkRoots, loadMetroConfig } = require("./metro_config.cjs");
 
 const { values: args } = parseArgs({
   allowNegative: true,
@@ -39,8 +40,91 @@ function hermescPath(hermesCompilerDir) {
   return path.join(hermesCompilerDir, "hermesc", hostDir, "hermesc");
 }
 
+// The Expo CLI's bin, when the app depends on expo: its Metro setup (autolinking-based module
+// resolution, virtual modules such as expo/virtual/env) only exists inside the CLI.
+function expoCli(projectRoot) {
+  try {
+    return createRequire(path.join(projectRoot, "package.json")).resolve("expo/bin/cli");
+  } catch {
+    return null;
+  }
+}
+
+// `expo export:embed`, as Expo's Gradle and Xcode build phases run it, with a Metro config that
+// wraps the app's own (or Expo's default) to watch the rules_js store the packages live in.
+function expoBundle(projectRoot, cli) {
+  const work = path.resolve(`${args["bundle-out"]}.expo`);
+  fs.mkdirSync(work, { recursive: true });
+  const userConfig = ["metro.config.js", "metro.config.cjs"]
+    .map((f) => path.join(projectRoot, f))
+    .find((f) => fs.existsSync(f));
+  const metroConfig = path.join(work, "metro.config.cjs");
+  fs.writeFileSync(
+    metroConfig,
+    `"use strict";
+const projectRoot = ${JSON.stringify(projectRoot)};
+const extraRoots = ${JSON.stringify(linkRoots(projectRoot))};
+module.exports = async () => {
+  let config = ${
+    userConfig
+      ? `require(${JSON.stringify(userConfig)})`
+      : `require(require.resolve("expo/metro-config", { paths: [projectRoot] })).getDefaultConfig(projectRoot)`
+  };
+  if (typeof config === "function") config = await config();
+  config = await config;
+  return {
+    ...config,
+    watchFolders: [...new Set([...(config.watchFolders ?? []), ...extraRoots])],
+    cacheStores: [],
+    resetCache: true,
+  };
+};
+`,
+  );
+  fs.mkdirSync(args["assets-dest"], { recursive: true });
+  const cliArgs = [
+    cli,
+    "export:embed",
+    `--platform=${args.platform}`,
+    `--dev=${args.dev}`,
+    `--minify=${!args.dev}`,
+    `--entry-file=${args.entry}`,
+    `--bundle-output=${path.resolve(args["bundle-out"])}`,
+    `--sourcemap-output=${path.resolve(args["sourcemap-out"])}`,
+    `--assets-dest=${path.resolve(args["assets-dest"])}`,
+    `--config=${metroConfig}`,
+    "--reset-cache",
+  ];
+  if (args.hermes) cliArgs.push("--bytecode");
+  const tmp = path.join(work, "tmp");
+  fs.mkdirSync(tmp, { recursive: true });
+  const result = spawnSync(process.execPath, cliArgs, {
+    cwd: projectRoot,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      // Expo's .env loading and telemetry are off: an action's inputs are its only config.
+      CI: "1",
+      EXPO_NO_DOTENV: "1",
+      EXPO_NO_TELEMETRY: "1",
+      // Metro caches transforms in os.tmpdir() under a key that ignores env vars.
+      TMPDIR: tmp,
+    },
+  });
+  if (result.status !== 0) {
+    fail(`expo export:embed exited with ${result.status ?? result.signal}`);
+  }
+  fs.rmSync(work, { recursive: true, force: true });
+  relativizeSources(args["sourcemap-out"], projectRoot);
+}
+
 async function main() {
   const projectRoot = path.resolve(args["project-root"]);
+  const cli = expoCli(projectRoot);
+  if (cli) {
+    expoBundle(projectRoot, cli);
+    return;
+  }
   const { config, req } = await loadMetroConfig(projectRoot, { hermetic: true });
   const { unstable_buildBundleWithConfig } = req.cli("@react-native/community-cli-plugin");
 

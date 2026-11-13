@@ -130,6 +130,13 @@ py_binary(
 )
 
 py_binary(
+    name = "extract_native_libs",
+    srcs = ["extract_native_libs.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
     name = "prefab_headers",
     srcs = ["prefab_headers.py"],
     legacy_create_init = 0,

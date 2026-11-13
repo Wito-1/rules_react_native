@@ -257,6 +257,32 @@ attributes are paths inside it rather than labels. If a stale generated file sto
 from loading (e.g. after a ruleset upgrade renamed an attribute), replace it with
 `def react_native_libraries(**kwargs): return []` and run `:autolink` again.
 
+### Expo modules
+
+An app that depends on `expo` is autolinked through Expo's own resolver as well: `:autolink` runs
+`expo-modules-autolinking resolve` and generates a `react_native_npm_library` per Expo module
+(including the ones `expo` brings along, such as expo-asset, which have no link target of their
+own: `npm_package_name` picks them out of `:node_modules/expo`), plus
+`react_native_expo_package_list`, the `expo.modules.ExpoModulesPackageList` that Expo's Gradle
+plugin generates and `ExpoModulesPackage` loads by name. Each module is built as
+`expo-module-gradle-plugin` configures it:
+
+- against expo-modules-core and the Maven artifacts it exposes (`api`), with Expo's Kotlin
+  compiler plugin (`kotlin_plugins`, `io.github.expo:expo-modules-v2-compiler-plugin`, versioned
+  `<expo-modules-v2>-<kotlinc>`; `:autolink` prints the coordinate to pin);
+- expo-modules-core packages the native libraries it ships prebuilt for the app's exact React
+  Native version (`prebuilt_native_libs`); a mismatch fails autolinking, since building them from
+  source isn't supported;
+- `expo` depends on every other module, because its `ExpoModulesV2ModuleList` is filled in by the
+  compiler plugin from its classpath.
+
+`react_native_bundle` runs `expo export:embed` (with `--bytecode`) for such apps, as Expo's Gradle
+build does, since Expo's Metro setup (module resolution through autolinking, virtual modules such
+as `expo/virtual/env`) only exists inside its CLI. The app's `metro.config.js` is wrapped to watch
+the rules_js store; `.env` loading and telemetry are off. The app's Kotlin uses
+`ExpoReactHostFactory`, `ApplicationLifecycleDispatcher` and `ReactActivityDelegateWrapper` as
+Expo's template does; see [`examples/expo`](examples/expo).
+
 ### C++ in libraries, and pure C++ TurboModules
 
 `react_native_android_library(cc_srcs = ...)` compiles C++ into `libappmodules.so`.
@@ -339,6 +365,7 @@ and runs every test):
 | [`cxx_module`](examples/cxx_module) | A pure C++ TurboModule, no Java |
 | [`third_party`](examples/third_party) | `react-native-safe-area-context` from npm (Kotlin, codegen, custom C++ shadow node), and Kotlin app code |
 | [`ecosystem`](examples/ecosystem) | React Navigation's native stack, react-native-screens, -gesture-handler, -svg, -safe-area-context: autolinked, minified |
+| [`expo`](examples/expo) | An Expo app (expo, expo-constants, expo-status-bar and the modules expo brings): Expo modules autolinked, bundled with `expo export:embed` |
 | [`assets`](examples/assets) | Density-qualified images (`@2x`, `@3x`) and a custom font |
 | [`fleet`](examples/fleet) | Two apps sharing a workspace JS package and a native library, each overriding a library resource |
 | [`brownfield`](examples/brownfield) | A native launcher activity opening React Native screens with launch options |
@@ -481,6 +508,9 @@ honored.
 - **Library BuildConfig is release-only.** A library is built once for every app variant, so its
   `BuildConfig.DEBUG` is false, as in a release AAR.
 - **No resource shrinking** (`shrinkResources`); R8 shrinks code only.
+- **Expo**: no Compose (`coreFeatures`), no Pika compile-time optimization (Expo's
+  `expo.enableCompileTimeOptimization=false`; records are introspected at run time), no inline
+  modules, and expo-modules-core's native code only from its prebuilt libraries.
 
 ## iOS
 

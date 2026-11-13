@@ -22,6 +22,7 @@ def _react_native_apk_test_impl(ctx):
     args += ["--native_lib=" + lib for lib in ctx.attr.native_libs]
     args += ["--asset=" + a for a in ctx.attr.assets]
     args += ["--entry=" + e for e in ctx.attr.entries]
+    args += ["--class=" + c for c in ctx.attr.classes]
     bundle_files = []
     if ctx.attr.aab:
         aab = [f for f in ctx.attr.apk[OutputGroupInfo].aab.to_list()][0]
@@ -56,6 +57,10 @@ libraries and assets plus native debug symbols.""",
         "abis": attr.string_list(default = ["arm64-v8a", "x86_64"], doc = "Exactly the ABIs the APK must ship."),
         "apk": attr.label(allow_single_file = [".apk"], mandatory = True),
         "assets": attr.string_list(doc = "Paths under assets/ that must exist, e.g. index.android.bundle."),
+        "classes": attr.string_list(
+            doc = "Java classes the dex files must contain, e.g. `expo.modules.ExpoModulesPackageList` (which is only " +
+                  "loaded by reflection). A descriptor search: a class only referenced by typed code also passes.",
+        ),
         "entries": attr.string_list(doc = "Any other paths that must exist in the APK, e.g. res/drawable-xhdpi-v4/images_logo.png."),
         "native_libs": attr.string_list(
             default = ["libreactnative.so", "libappmodules.so", "libhermesvm.so", "libc++_shared.so"],

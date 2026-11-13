@@ -2,6 +2,7 @@ packages:
   - "hello"
   - "cxx_module"
   - "ecosystem"
+  - "expo"
   - "native_modules"
   - "third_party"
   - "variants"

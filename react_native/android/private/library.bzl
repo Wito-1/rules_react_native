@@ -59,7 +59,7 @@ def _library_manifest(ctx, manifest_path, inputs):
     )
     return out
 
-def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, kotlin, assets, appmodules, proguard_specs):
+def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, kotlin, assets, appmodules, proguard_specs, native_libs = []):
     """Everything after manifest and resource compilation, shared by both rules."""
     compile_only = ([ctx.attr._react_native] if ctx.attr.react_native else []) + ctx.attr.maven_deps
     dep_infos = collect_android_infos(ctx.attr.deps + ctx.attr.exports + compile_only)
@@ -168,6 +168,7 @@ def _build_library(ctx, manifest, flata, srcs, srcjars, srcdirs, srcdir_inputs, 
             jars = [jar],
             react_packages = ctx.attr.react_packages,
             appmodules = appmodules,
+            native_libs = native_libs,
             proguard_specs = proguard_specs,
             maven_runtime = [d.label.name for d in ctx.attr.maven_deps],
         ),
@@ -298,6 +299,8 @@ its `react_packages` are added to PackageList.""",
     }),
 )
 
+_PREBUILT_ABIS = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]
+
 def _npm_package_dir(target, name):
     # npm_link_package's files are the package's whole closure; the package itself is the one
     # store directory named after it.
@@ -311,7 +314,7 @@ def _react_native_npm_library_impl(ctx):
     name = ctx.attr.npm_package.label.name
     if not name.startswith("node_modules/"):
         fail("npm_package must be an npm_link_all_packages target like \":node_modules/<package>\", got %s" % ctx.attr.npm_package.label)
-    pkg = _npm_package_dir(ctx.attr.npm_package, name[len("node_modules/"):])
+    pkg = _npm_package_dir(ctx.attr.npm_package, ctx.attr.npm_package_name or name[len("node_modules/"):])
 
     def path(rel):
         return pkg.path + "/" + rel
@@ -380,8 +383,32 @@ def _react_native_npm_library_impl(ctx):
             exported_includes = [d.path for d in prefab],
         ))
 
+    native_libs = []
+    for archive, libs in sorted(ctx.attr.prebuilt_native_libs.items()):
+        outs = []
+        for abi in _PREBUILT_ABIS:
+            for lib in libs:
+                f = ctx.actions.declare_file("%s/prebuilt/%s/%s" % (ctx.label.name, abi, lib))
+                outs.append(f)
+                native_libs.append(struct(abi = abi, file = f))
+        extract_args = ctx.actions.args()
+        extract_args.add("--archive", path(archive))
+        extract_args.add("--variant", "release")
+        extract_args.add_all(_PREBUILT_ABIS, before_each = "--abi")
+        extract_args.add_all(libs, before_each = "--lib")
+        extract_args.add("--out_dir", outs[0].dirname.rpartition("/")[0])
+        ctx.actions.run(
+            executable = ctx.executable._extract_native_libs,
+            arguments = [extract_args],
+            inputs = [pkg],
+            outputs = outs,
+            mnemonic = "ReactNativeExtractNativeLibs",
+            progress_message = "Extracting the prebuilt native libraries of %{label}",
+        )
+
     return _build_library(
         ctx,
+        native_libs = native_libs,
         manifest = manifest,
         flata = flata,
         srcs = [],
@@ -419,6 +446,16 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
         "manifest": attr.string(default = "android/src/main/AndroidManifest.xml", doc = "Library manifest; empty for none."),
         "proguard_specs": attr.string_list(doc = "R8/ProGuard rules files in the package that apps must apply (`consumerProguardFiles`), e.g. `[\"android/proguard-rules.pro\"]`."),
         "npm_package": attr.label(mandatory = True, doc = "The package's link target from `npm_link_all_packages`, e.g. `:node_modules/react-native-safe-area-context`."),
+        "npm_package_name": attr.string(
+            doc = "The package to build when it isn't `npm_package` itself but one of its dependencies, which have no " +
+                  "link target of their own: `npm_package = \":node_modules/expo\"`, `npm_package_name = \"expo-asset\"`.",
+        ),
+        "prebuilt_native_libs": attr.string_list_dict(
+            doc = "Native libraries the package ships prebuilt instead of building its C++, `{archive: [libraries]}`: " +
+                  "a tar archive in the package laid out as `<variant>/<abi>/<library>`, e.g. expo-modules-core's " +
+                  "`{\"android/prebuilt/native-libs.tar.xz\": [\"libexpo-modules-core.so\", \"libexpo-modules-jsi.so\"]}`. " +
+                  "The release variant is packaged for every ABI.",
+        ),
         "prefab_headers": attr.string_list_dict(
             doc = "Headers the library publishes for other libraries' native code (Gradle `prefab { headers }`), " +
                   "`{prefix: [directories]}`: every .h/.hpp below the directories is flattened into `<prefix>/`, " +
@@ -438,6 +475,7 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
                   "in the Maven set ships (prefab). React Native's, fbjni, log and android are always linked.",
         ),
         "_merge_zips": attr.label(default = "//react_native/android/tools:merge_zips", executable = True, cfg = "exec"),
+        "_extract_native_libs": attr.label(default = "//react_native/android/tools:extract_native_libs", executable = True, cfg = "exec"),
         "_prefab_headers": attr.label(default = "//react_native/android/tools:prefab_headers", executable = True, cfg = "exec"),
     }),
 )

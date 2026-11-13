@@ -21,6 +21,7 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
 - [`react_native/defs.bzl`](react_native/defs.bzl): `react_native_android_app` (+ `.install`,
   `.sign`), `react_native_android_library`, `react_native_npm_library`, `react_native_java_library`,
   `react_native_bundle`, `react_native_codegen`, `react_native_dev_server`, `react_native_apk_test`,
+  `react_native_expo_package_list`,
   `react_native_maven_pin`. Generated reference: [`docs/defs.md`](docs/defs.md).
 - [`react_native/extensions.bzl`](react_native/extensions.bzl): the `react_native` extension. Tags:
   `maven(name, lock_file)` (consumer artifact sets; the lockfile's `build_type` makes it the default
@@ -76,6 +77,15 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   hermes-android) of any file those ship, for packaging and for `libappmodules.so`'s link;
   React Native's Gradle plugin `pickFirst`s these, which leaves it to dependency order. Any
   other differing duplicate still fails packaging.
+- **Manifest priority**: `_merge_manifests` passes library manifests dependents-first (reversed
+  postorder), as AGP does, so a library's `tools:replace` beats its dependencies' values; the
+  resource overlays stay postorder.
+- **Expo** (`describeExpo` in autolink.cjs, `expo.bzl`): modules come from
+  `expo-modules-autolinking resolve`, not React Native's config, and their libraries skip
+  `react-native.config.js`. `KOTLINC_VERSION` in autolink.cjs must follow
+  `maven_kotlin_spec.json` (it versions Expo's compiler plugin). `bundle.cjs` switches to
+  `expo export:embed` whenever the app resolves `expo/bin/cli`, with a generated Metro config that
+  wraps the app's and adds `linkRoots`.
 - **Shipping outputs**: `android_apk` dexes with D8, or R8 when `minify` (`tools/r8.py` gathers the
   rules: defaults, aapt2 `--proguard`, `AndroidLibraryInfo.proguard_specs`, jars'
   `META-INF/com.android.tools/r8*` over `META-INF/proguard`). The `.aab` reuses the APK's

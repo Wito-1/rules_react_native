@@ -25,6 +25,7 @@ npm.npm_translate_lock(
         "//:connect/proto/package.json",
         "//:connect/server/package.json",
         "//:connect/web/package.json",
+        "//:expo/package.json",
         "//:fleet/driver/package.json",
         "//:fleet/operator/package.json",
         "//:fleet/shared/package.json",

@@ -9,6 +9,12 @@ DEFAULT_JAVACOPTS = ["-source", "17", "-target", "17"]
 
 JAVA_ATTRS = {
     "javacopts": attr.string_list(doc = "Extra javac flags, after the defaults (`-source 17 -target 17`)."),
+    "kotlin_plugins": attr.label_list(
+        allow_files = [".jar"],
+        cfg = "exec",
+        doc = "Kotlin compiler plugin jars (`-Xplugin`), e.g. Expo's `expo-modules-v2-compiler-plugin` " +
+              "from the Maven set. Their version must match the ruleset's kotlinc (2.2.10).",
+    ),
     "kotlincopts": attr.string_list(doc = "Extra kotlinc flags, after the defaults (`-jvm-target 17`)."),
     "_android_jar": attr.label(default = "@rn_android_sdk//:android_jar_file", allow_single_file = True),
     "_javac": attr.label(default = "//react_native/android/tools:javac", executable = True, cfg = "exec"),
@@ -101,6 +107,8 @@ def compile_java(ctx, out, srcs = [], srcjars = [], srcdirs = [], srcdir_inputs 
         args.add("--java", runtime.java_executable_exec_path)
         args.add_all(kotlin_jars, before_each = "--kotlinc_classpath")
         args.add("--module_name", _kotlin_module_name(ctx.label))
+        kotlin_jars = kotlin_jars + ctx.files.kotlin_plugins
+        args.add_all(ctx.files.kotlin_plugins, format_each = "--kotlincopt=-Xplugin=%s")
         args.add_all(ctx.attr.kotlincopts, format_each = "--kotlincopt=%s")
     args.add("--classpath", ctx.file._android_jar)
     args.add_all(classpath, before_each = "--classpath")

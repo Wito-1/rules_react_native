@@ -352,6 +352,20 @@
       "sha256": "01f76ab043770a97b054046f9815717b82ce0355c02967d16c61981359dc189a",
       "url": "https://dl.google.com/dl/android/maven2/androidx/customview/customview/1.1.0/customview-1.1.0.aar"
     },
+    "androidx_documentfile_documentfile": {
+      "api_deps": [
+        "org_jspecify_jspecify"
+      ],
+      "coordinate": "androidx.documentfile:documentfile:1.1.0",
+      "deps": [
+        "androidx_annotation_annotation",
+        "androidx_core_core",
+        "org_jspecify_jspecify"
+      ],
+      "packaging": "aar",
+      "sha256": "684e0ffcb21a660c939d1bb814521f42c4bd74816f4a117291fe6a101cf3a822",
+      "url": "https://dl.google.com/dl/android/maven2/androidx/documentfile/documentfile/1.1.0/documentfile-1.1.0.aar"
+    },
     "androidx_drawerlayout_drawerlayout": {
       "api_deps": [
         "androidx_annotation_annotation",
@@ -812,6 +826,20 @@
       "packaging": "aar",
       "sha256": "6faa90390d1fdbf0adb9a99bf99de67b94c6c6f35aea9510593a9d17973736a2",
       "url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing/1.2.0/tracing-1.2.0.aar"
+    },
+    "androidx_tracing_tracing_ktx": {
+      "api_deps": [
+        "androidx_tracing_tracing",
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "androidx.tracing:tracing-ktx:1.2.0",
+      "deps": [
+        "androidx_tracing_tracing",
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "aar",
+      "sha256": "c33f9cbd931e6190ca38aa09bf8a7a8a19391d4b0fb7a7605a6b59f2d42580d1",
+      "url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-ktx/1.2.0/tracing-ktx-1.2.0.aar"
     },
     "androidx_transition_transition": {
       "api_deps": [
@@ -1444,6 +1472,14 @@
       "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7",
       "url": "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar"
     },
+    "com_google_code_gson_gson": {
+      "api_deps": [],
+      "coordinate": "com.google.code.gson:gson:2.8.6",
+      "deps": [],
+      "packaging": "jar",
+      "sha256": "c8fb4839054d280b3033f800d1f5a97de2f028eb8ba2eb458ad287e536f3f25f",
+      "url": "https://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.6/gson-2.8.6.jar"
+    },
     "com_google_errorprone_error_prone_annotations": {
       "api_deps": [],
       "coordinate": "com.google.errorprone:error_prone_annotations:2.15.0",
@@ -1498,17 +1534,152 @@
     },
     "com_squareup_okio_okio": {
       "api_deps": [
-        "org_jetbrains_kotlin_kotlin_stdlib",
-        "org_jetbrains_kotlin_kotlin_stdlib_common"
+        "com_squareup_okio_okio_jvm"
       ],
-      "coordinate": "com.squareup.okio:okio:2.9.0",
+      "coordinate": "com.squareup.okio:okio:3.16.0",
       "deps": [
-        "org_jetbrains_kotlin_kotlin_stdlib",
-        "org_jetbrains_kotlin_kotlin_stdlib_common"
+        "com_squareup_okio_okio_jvm"
+      ]
+    },
+    "com_squareup_okio_okio_jvm": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "com.squareup.okio:okio-jvm:3.16.0",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
       ],
       "packaging": "jar",
-      "sha256": "b9255c163b7edc0b8406559d66579c6c32dea01f691943bac5d3fdbd10f69b44",
-      "url": "https://repo1.maven.org/maven2/com/squareup/okio/okio/2.9.0/okio-2.9.0.jar"
+      "sha256": "c737c035ca675187bf11a67ddb9581954bf0d5ca9f3e048e838b3267cf32b5c3",
+      "url": "https://repo1.maven.org/maven2/com/squareup/okio/okio-jvm/3.16.0/okio-jvm-3.16.0.jar"
+    },
+    "com_squareup_zstd_zstd_kmp": {
+      "api_deps": [
+        "com_squareup_zstd_zstd_kmp_android"
+      ],
+      "coordinate": "com.squareup.zstd:zstd-kmp:0.4.0",
+      "deps": [
+        "com_squareup_zstd_zstd_kmp_android"
+      ]
+    },
+    "com_squareup_zstd_zstd_kmp_android": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "com.squareup.zstd:zstd-kmp-android:0.4.0",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "aar",
+      "sha256": "2778570454ae78026df42ace7168b8a6500f2521a5d497f2ab2fc0f804247826",
+      "url": "https://repo1.maven.org/maven2/com/squareup/zstd/zstd-kmp-android/0.4.0/zstd-kmp-android-0.4.0.aar"
+    },
+    "com_squareup_zstd_zstd_kmp_okio": {
+      "api_deps": [
+        "com_squareup_zstd_zstd_kmp_okio_android"
+      ],
+      "coordinate": "com.squareup.zstd:zstd-kmp-okio:0.4.0",
+      "deps": [
+        "com_squareup_zstd_zstd_kmp_okio_android"
+      ]
+    },
+    "com_squareup_zstd_zstd_kmp_okio_android": {
+      "api_deps": [
+        "com_squareup_okio_okio",
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "com.squareup.zstd:zstd-kmp-okio-android:0.4.0",
+      "deps": [
+        "com_squareup_okio_okio",
+        "com_squareup_zstd_zstd_kmp",
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "aar",
+      "sha256": "8461ece75b646bfe30f6f53a559c2eac82f745f3575d76648386182ffa7c873d",
+      "url": "https://repo1.maven.org/maven2/com/squareup/zstd/zstd-kmp-okio-android/0.4.0/zstd-kmp-okio-android-0.4.0.aar"
+    },
+    "commons_codec_commons_codec": {
+      "api_deps": [],
+      "coordinate": "commons-codec:commons-codec:1.10",
+      "deps": [],
+      "packaging": "jar",
+      "sha256": "4241dfa94e711d435f29a4604a3e2de5c4aa3c165e23bd066be6fc1fc4309569",
+      "url": "https://repo1.maven.org/maven2/commons-codec/commons-codec/1.10/commons-codec-1.10.jar"
+    },
+    "commons_io_commons_io": {
+      "api_deps": [],
+      "coordinate": "commons-io:commons-io:1.4",
+      "deps": [],
+      "packaging": "jar",
+      "sha256": "a7f713593007813bf07d19bd1df9f81c86c0719e9a0bb2ef1b98b78313fc940d",
+      "url": "https://repo1.maven.org/maven2/commons-io/commons-io/1.4/commons-io-1.4.jar"
+    },
+    "io_github_expo_expo_modules_v2_compiler_plugin": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "io.github.expo:expo-modules-v2-compiler-plugin:0.2.7-2.2.10",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "jar",
+      "sha256": "fd62bc9bc610913b8e66c5cf6aa105eb0c9285fb99e12e45c28d8bcc5db8cdaf",
+      "url": "https://repo1.maven.org/maven2/io/github/expo/expo-modules-v2-compiler-plugin/0.2.7-2.2.10/expo-modules-v2-compiler-plugin-0.2.7-2.2.10.jar"
+    },
+    "io_github_expo_expo_modules_v2_react": {
+      "api_deps": [
+        "io_github_expo_kolibri_kolibri_android",
+        "io_github_expo_kolibri_runtime",
+        "org_jetbrains_kotlin_kotlin_stdlib",
+        "org_jetbrains_kotlinx_kotlinx_coroutines_core"
+      ],
+      "coordinate": "io.github.expo:expo-modules-v2-react:0.2.7",
+      "deps": [
+        "com_facebook_react_react_android",
+        "io_github_expo_kolibri_kolibri_android",
+        "io_github_expo_kolibri_runtime",
+        "org_jetbrains_kotlin_kotlin_stdlib",
+        "org_jetbrains_kotlinx_kotlinx_coroutines_core"
+      ],
+      "packaging": "aar",
+      "sha256": "ae8f26bbc6b6168a3caa3a36752cd3b500247fbc02a28cea283f641bf7062ea0",
+      "url": "https://repo1.maven.org/maven2/io/github/expo/expo-modules-v2-react/0.2.7/expo-modules-v2-react-0.2.7.aar"
+    },
+    "io_github_expo_kolibri_kolibri_android": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "io.github.expo.kolibri:kolibri-android:0.2.4",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "aar",
+      "sha256": "bf527ae00ef8269a62b77bb949518f2e8a8ceb1a94fe9c3c5a4c522d58bdcdbb",
+      "url": "https://repo1.maven.org/maven2/io/github/expo/kolibri/kolibri-android/0.2.4/kolibri-android-0.2.4.aar"
+    },
+    "io_github_expo_kolibri_runtime": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "io.github.expo.kolibri:runtime:0.2.4",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "jar",
+      "sha256": "adf456eb170b4986e46ec243aaa823de5510c72549f4b119847f37c6e4cab792",
+      "url": "https://repo1.maven.org/maven2/io/github/expo/kolibri/runtime/0.2.4/runtime-0.2.4.jar"
+    },
+    "io_github_expo_pika_pika_api": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "io.github.expo.pika:pika-api:1.1.0",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "jar",
+      "sha256": "61e8446172bee3fdfd1e445d8947d7dd269cc048434cfc1a5f2a26f651865640",
+      "url": "https://repo1.maven.org/maven2/io/github/expo/pika/pika-api/1.1.0/pika-api-1.1.0.jar"
     },
     "io_github_zhongwuzw_annotation": {
       "api_deps": [],
@@ -1539,6 +1710,14 @@
       "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff",
       "url": "https://repo1.maven.org/maven2/javax/inject/javax.inject/1/javax.inject-1.jar"
     },
+    "org_brotli_dec": {
+      "api_deps": [],
+      "coordinate": "org.brotli:dec:0.1.2",
+      "deps": [],
+      "packaging": "jar",
+      "sha256": "615c0c3efef990d77831104475fba6a1f7971388691d4bad1471ad84101f6d52",
+      "url": "https://repo1.maven.org/maven2/org/brotli/dec/0.1.2/dec-0.1.2.jar"
+    },
     "org_jetbrains_annotations": {
       "api_deps": [],
       "coordinate": "org.jetbrains:annotations:23.0.0",
@@ -1555,22 +1734,29 @@
       "sha256": "3ee3a56dd451e33f8352e0d2803a55ca1b9156d7f8a8e0759bf8e187ff8db24a",
       "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-annotations-jvm/1.3.72/kotlin-annotations-jvm-1.3.72.jar"
     },
+    "org_jetbrains_kotlin_kotlin_reflect": {
+      "api_deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:2.2.10",
+      "deps": [
+        "org_jetbrains_kotlin_kotlin_stdlib"
+      ],
+      "packaging": "jar",
+      "sha256": "c48db4f8cd1bfd67f72d59255065fb41bfda43ca2942dac4d9deb897aa126ba4",
+      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-reflect/2.2.10/kotlin-reflect-2.2.10.jar"
+    },
     "org_jetbrains_kotlin_kotlin_stdlib": {
       "api_deps": [
         "org_jetbrains_annotations"
       ],
-      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.2.10",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.2.20",
       "deps": [
         "org_jetbrains_annotations"
       ],
       "packaging": "jar",
-      "sha256": "9c67cc79efd6b9215b49d2a4308f5f3433537376c7c88e89bdd6729bd096e61a",
-      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.2.10/kotlin-stdlib-2.2.10.jar"
-    },
-    "org_jetbrains_kotlin_kotlin_stdlib_common": {
-      "api_deps": [],
-      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-common:2.2.10",
-      "deps": []
+      "sha256": "8836ccffd3585fadda9901244b20d42901d2f3cd581058d8434e2ffabcf3a3e7",
+      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.2.20/kotlin-stdlib-2.2.20.jar"
     },
     "org_jetbrains_kotlin_kotlin_stdlib_jdk7": {
       "api_deps": [
@@ -1603,20 +1789,20 @@
         "org_jetbrains_kotlin_kotlin_stdlib",
         "org_jetbrains_kotlinx_kotlinx_coroutines_core"
       ],
-      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
       "deps": [
         "org_jetbrains_kotlin_kotlin_stdlib",
         "org_jetbrains_kotlinx_kotlinx_coroutines_core"
       ],
       "packaging": "jar",
-      "sha256": "a134dacf4e6578b29b32e97aa50548d09cb45e3cb3551ce77ac27e55e265d8f5",
-      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.8.1/kotlinx-coroutines-android-1.8.1.jar"
+      "sha256": "e713f1f874244115a07571065cffa0f24f5e78300e9720fea16de3af1d75fd41",
+      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.10.2/kotlinx-coroutines-android-1.10.2.jar"
     },
     "org_jetbrains_kotlinx_kotlinx_coroutines_core": {
       "api_deps": [
         "org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm"
       ],
-      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
       "deps": [
         "org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm"
       ]
@@ -1626,14 +1812,14 @@
         "org_jetbrains_annotations",
         "org_jetbrains_kotlin_kotlin_stdlib"
       ],
-      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.1",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
       "deps": [
         "org_jetbrains_annotations",
         "org_jetbrains_kotlin_kotlin_stdlib"
       ],
       "packaging": "jar",
-      "sha256": "f3d4f5de1c391bbcc20f3b3435ccbac013521e76b6902d7d59635ec15c1f797e",
-      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.8.1/kotlinx-coroutines-core-jvm-1.8.1.jar"
+      "sha256": "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd",
+      "url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar"
     },
     "org_jspecify_jspecify": {
       "api_deps": [],
