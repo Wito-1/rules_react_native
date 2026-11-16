@@ -221,10 +221,45 @@ autolinks react-native-safe-area-context alone. What the generator reproduces:
   codegen output that CMakeLists.txt globs is compiled (libraries that ship their own `<lib>.cpp`
   take just the components). The library's own `externalNativeBuild` becomes its own
   `lib<name>.so` (`shared_libraries`), which its Java loads by name.
+- **CMake details**: `${REACT_NATIVE_DIR}` include directories become
+  `shared_library_react_native_includes` (React Native's own sources, for libraries such as
+  Reanimated that compile against more than its prefab headers); `target_precompile_headers`
+  become forced includes; `-D` flags appended to `CMAKE_CXX_FLAGS` become defines; NDK platform
+  libraries (`jnigraphics`, `sync`, `EGL`, ...) are linked by name; the library's codegen output is
+  on its shared libraries' include path, as Gradle's `build/generated/source/codegen/jni` is.
 - **Resources**, including several `res.srcDirs`; **consumer ProGuard rules**; **BuildConfig**
   with typed `buildConfigField`s (values `build.gradle` computes take the type's zero value); R
   classes of the library's dependencies (`com.facebook.react.R`), as AGP's compile R jars;
-  dependencies between libraries (`rootProject.subprojects.find { it.name == ... }`).
+  dependencies between libraries (`rootProject.subprojects.find { it.name == ... }`); `compileOnly`
+  Maven dependencies with a pinned version; `def v = (getExtOrDefault("v") ?: "1.0")` defaults.
+- **pnpm workspace packages** (`workspace:*`), linked from the repo rather than the store.
+
+What a library's Gradle script computes (a version string, feature flags read from a JSON file, a
+directory it passes CMake) can't be read without running Gradle. `react_native_libraries()` takes
+`overrides`, attributes to add or replace per generated target, and the generated file exports
+`VERSIONS`, each library's installed version, for them:
+
+```starlark
+load(":react_native_libraries.bzl", "VERSIONS", "react_native_libraries")
+
+react_native_android_app(
+    name = "app",
+    deps = react_native_libraries(overrides = {
+        "npm_react_native_worklets": {"shared_library_defines": {"worklets": [
+            "WORKLETS_VERSION=" + VERSIONS["react-native-worklets"],
+            "WORKLETS_FEATURE_FLAGS=\"[RUNTIME_TEST_FLAG:false]...\"",
+        ]}},
+    }),
+    ...
+)
+```
+
+Two attributes of `react_native_npm_library` exist for such overrides and hand-written targets:
+`imported_shared_libraries` (CMake's `add_library(... SHARED IMPORTED)`: a prebuilt
+`<dir>/<abi>/lib<name>.so` in a package, packaged as it is and linked by `shared_library_links`,
+e.g. react-native-webgpu's Dawn from the react-native-webgpu-dawn package) and
+`shared_library_cc_deps`/`shared_library_cc_srcs` (C++ from Bazel `cc_library` and filegroup
+targets compiled into a library's shared library, for a CMake that fetches its own sources).
 
 The hand-written form of the same target, for a library the generator doesn't handle:
 
@@ -275,6 +310,11 @@ plugin generates and `ExpoModulesPackage` loads by name. Each module is built as
   source isn't supported;
 - `expo` depends on every other module, because its `ExpoModulesV2ModuleList` is filled in by the
   compiler plugin from its classpath.
+- a module the app doesn't depend on itself comes from the closure of the dependency that brings
+  it (`expo` for its own, expo-auth-session for expo-linking);
+- a package that is both an Expo module and a React Native library in another directory
+  (@sentry/react-native's `android/expo-handler` and `android/`) is linked both ways, as Gradle
+  does.
 
 `react_native_bundle` runs `expo export:embed` (with `--bytecode`) for such apps, as Expo's Gradle
 build does, since Expo's Metro setup (module resolution through autolinking, virtual modules such
@@ -332,6 +372,12 @@ reporters, the app's output groups `proguard_mapping` and `native_debug_symbols`
 as the Gradle plugin makes it) hold the same data. The bundle is unsigned in the build:
 `jarsigner` embeds a signing time, which would make it irreproducible, and the upload key belongs
 outside the build anyway.
+
+Stores reject a versionCode they've seen, so release pipelines number each build.
+`version_code_from_embed_label = True` makes the manifest's versionCode the build's `--embed_label`
+when it sets one (`bazel build --embed_label=$BUILD_NUMBER //app:app.aab`). Only a small action
+reads Bazel's status file; its output changes only with the label, so the rest of the app stays
+cached, and a build without the label takes `version_code`.
 
 APKs, bundles, mappings, symbols and source maps are byte-identical across checkouts and machines.
 

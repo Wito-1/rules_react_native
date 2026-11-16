@@ -54,6 +54,7 @@ def react_native_android_app(
         min_sdk = 24,
         target_sdk = None,
         version_code = 1,
+        version_code_from_embed_label = False,
         version_name = "1.0",
         abis = ["arm64-v8a", "x86_64"],
         debug = False,
@@ -102,9 +103,12 @@ def react_native_android_app(
         maven_debug: The set with react-android/hermes-android's debug variants, used when
             `debug = True`. Defaults to the lockfile with `"build_type": "debug"`.
         srcs: Java or Kotlin sources, typically MainApplication and MainActivity.
-        res: Files under one `res/` directory.
+        res: Files under `res/` directories. A later directory's resources override an earlier
+            one's, like a Gradle flavor's over main's: `glob(["res/**"]) + glob(["staging/res/**"])`.
         assets: Files under one `assets/` directory, packaged at the same relative paths. Custom
             fonts go in `assets/fonts/<fontFamily>.ttf`, where React Native's font manager looks.
+            Also directories (a rule's tree artifact), whose contents are packaged at their
+            relative paths: for assets whose names are only known when they're built.
         deps: `react_native_android_library`, `react_native_npm_library`, `react_native_java_library`, Maven artifacts
             (`@rn_maven//:<group>_<artifact>`) or plain `java_library` targets.
         codegen: `react_native_codegen` targets. Their Java specs are compiled with `srcs`, their
@@ -114,6 +118,11 @@ def react_native_android_app(
         min_sdk: minSdkVersion.
         target_sdk: targetSdkVersion. Defaults to the React Native profile's compileSdk.
         version_code: versionCode.
+        version_code_from_embed_label: Use the build's `--embed_label`, when it sets one, as the
+            manifest's versionCode instead of `version_code`: for store builds numbered by a
+            release pipeline (`bazel build --embed_label=$BUILD_NUMBER`). Only the manifest takes
+            it; `BuildConfig.VERSION_CODE` stays `version_code`. A build without the label, or with
+            the same one, is cached as before.
         version_name: versionName.
         abis: ABIs whose native libraries are packaged.
         debug: Builds against react-android/hermes-android's debug variants and sets
@@ -173,6 +182,7 @@ def react_native_android_app(
         min_sdk = min_sdk,
         target_sdk = target_sdk,
         version_code = version_code,
+        version_code_from_embed_label = version_code_from_embed_label,
         version_name = version_name,
         debug = debug,
         edge_to_edge = edge_to_edge,

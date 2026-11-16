@@ -6,9 +6,33 @@ Re-run it after adding, removing or upgrading a native npm dependency; the gener
 
 load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_expo_package_list", "react_native_npm_library")
 
-def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", **kwargs):
-    """Declares one react_native_npm_library per native dependency; returns their labels for the app's deps."""
-    react_native_npm_library(
+# The installed version of each library's package, for `overrides` that pass it to the build.
+VERSIONS = {
+    "@expo/dom-webview": "58.0.2",
+    "@expo/log-box": "58.0.15",
+    "expo": "58.0.22",
+    "expo-asset": "58.0.21",
+    "expo-constants": "58.0.16",
+    "expo-file-system": "58.0.13",
+    "expo-font": "58.0.12",
+    "expo-keep-awake": "58.0.4",
+    "expo-modules-core": "58.0.30",
+    "expo-status-bar": "58.0.4",
+}
+
+def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", overrides = {}, **kwargs):
+    """Declares one react_native_npm_library per native dependency; returns their labels for the app's deps.
+
+    Args:
+        node_modules: The app's npm_link_all_packages target.
+        maven: The app's release Maven repository.
+        overrides: Attributes to add or replace, per library: `{target name: {attribute: value}}`,
+            for what autolinking can't read from a library's Gradle build.
+        **kwargs: Common attributes of every target.
+    """
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo",
         deps = [
             ":npm_expo_dom_webview",
@@ -46,9 +70,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         react_packages = [
             "expo.modules.ExpoModulesPackage",
         ],
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_asset",
         deps = [
             ":npm_expo_modules_core",
@@ -71,9 +96,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = node_modules + "/expo",
         npm_package_name = "expo-asset",
         package = "expo.modules.asset",
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_constants",
         deps = [
             ":npm_expo_modules_core",
@@ -94,9 +120,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         ],
         npm_package = node_modules + "/expo-constants",
         package = "expo.modules.constants",
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_dom_webview",
         deps = [
             ":npm_expo_modules_core",
@@ -118,9 +145,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = node_modules + "/expo",
         npm_package_name = "@expo/dom-webview",
         package = "expo.modules.webview",
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_file_system",
         deps = [
             ":npm_expo_modules_core",
@@ -151,9 +179,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         res_dirs = [
             "android/src/main/res",
         ],
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_font",
         deps = [
             ":npm_expo_modules_core",
@@ -175,9 +204,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = node_modules + "/expo",
         npm_package_name = "expo-font",
         package = "expo.modules.font",
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_keep_awake",
         deps = [
             ":npm_expo_modules_core",
@@ -199,9 +229,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = node_modules + "/expo",
         npm_package_name = "expo-keep-awake",
         package = "expo.modules.keepawake",
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_log_box",
         build_config = True,
         build_config_constants = {
@@ -229,9 +260,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = node_modules + "/expo",
         npm_package_name = "@expo/log-box",
         package = "expo.modules.logbox",
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_modules_core",
         build_config = True,
         build_config_constants = {
@@ -269,9 +301,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         proguard_specs = [
             "android/proguard-rules.pro",
         ],
-        **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_expo_status_bar",
         deps = [
             ":npm_expo_modules_core",
@@ -297,7 +330,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         res_dirs = [
             "android/src/main/res",
         ],
-        **kwargs
     )
     react_native_expo_package_list(
         name = "expo_package_list",
@@ -349,3 +381,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         ":npm_expo_status_bar",
         ":expo_package_list",
     ]
+
+def _library(overrides, kwargs, **attrs):
+    react_native_npm_library(**(attrs | overrides.get(attrs["name"], {}) | kwargs))

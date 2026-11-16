@@ -10,6 +10,7 @@ and React Native reads the bundle through the AssetManager, which can mmap store
 """
 
 import argparse
+import os
 import sys
 import zipfile
 from typing import Final
@@ -71,6 +72,13 @@ def main() -> int:
         help="File to place under assets/",
     )
     parser.add_argument(
+        "--asset_dir",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Directory whose files go under assets/ at their relative paths",
+    )
+    parser.add_argument(
         "--java_resources_from",
         action="append",
         default=[],
@@ -130,7 +138,13 @@ def main() -> int:
         native_libs[path] = (src, data)
     for path in sorted(native_libs):
         apk.add("lib/" + path, native_libs[path][1], compress=False)
-    for entry in sorted(args.asset):
+    asset_entries = list(args.asset)
+    for d in args.asset_dir:
+        for root, _, names in os.walk(d):
+            for name in names:
+                src = os.path.join(root, name)
+                asset_entries.append(f"{os.path.relpath(src, d)}={src}")
+    for entry in sorted(asset_entries):
         path, src = entry.split("=", 1)
         with open(src, "rb") as f:
             apk.add("assets/" + path, f.read())

@@ -51,7 +51,10 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
 - **npm packages are tree artifacts.** rules_js extracts a package in an action, so
   `react_native_npm_library` finds the package's store directory among the link target's files and
   addresses everything inside it by path (`--srcdir` for javac.py, `args.add_all(map_each = ...,
-  allow_closure = True)` for C++ sources). Never try to glob or label files inside it.
+  allow_closure = True)` for C++ sources). Never try to glob or label files inside it. A pnpm
+  workspace package is the exception: its store entry is a symlink, and `_npm_package_dir` returns
+  its individual files (the one `package.json` outside node_modules marks the root) as
+  `struct(path, files)`; use `pkg.files` as inputs, never the store entry.
 - **Autolinking** (`react_native/js/autolink.cjs`) reads package.json, react-native.config.js,
   build.gradle and CMakeLists.txt with regexes and a tiny CMake evaluator (set, file(GLOB),
   add_library, include dirs; conditionals ignored). Keep its output stable: every consumer's
@@ -59,6 +62,10 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   `maven_deps` (compile-only, release set); `AndroidLibraryInfo.maven_runtime` names them and
   `resolve_app_deps` takes them from the app's own `@<repo>//:all` (`android_maven_set`), so apps
   ship only what their libraries need. Spec `"libraries"` pin such artifacts outside the roots.
+  The generated macro routes every library through `_library(overrides, kwargs, **attrs)`, so
+  consumers can replace attributes without editing the file, and exports `VERSIONS`. CMake's
+  `${REACT_NATIVE_DIR}` is the app's real react-native directory while evaluating; includes under
+  it are emitted relative to it (`shared_library_react_native_includes`).
 - **Library R classes of dependencies**: `gen_r.py --compile_only` writes non-final R classes for
   every dependency package with an R.txt; they're excluded from the library jar.
 - **libappmodules.so is built from `appmodules_unit`s** (`aar.bzl`): one per codegen library plus
@@ -82,7 +89,9 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   resource overlays stay postorder.
 - **Expo** (`describeExpo` in autolink.cjs, `expo.bzl`): modules come from
   `expo-modules-autolinking resolve`, not React Native's config, and their libraries skip
-  `react-native.config.js`. `KOTLINC_VERSION` in autolink.cjs must follow
+  `react-native.config.js`, except packages whose Expo project is a different directory from their
+  React Native one (`alsoReactNative`: Sentry), which get both targets. A module the app doesn't
+  depend on comes from `linkedVia`, the dependency whose closure holds it. `KOTLINC_VERSION` in autolink.cjs must follow
   `maven_kotlin_spec.json` (it versions Expo's compiler plugin). `bundle.cjs` switches to
   `expo export:embed` whenever the app resolves `expo/bin/cli`, with a generated Metro config that
   wraps the app's and adds `linkRoots`.
@@ -94,6 +103,10 @@ that re-pinning the examples is a no-op, and checks that Linux arm64 fails with 
   needs kotlin-stdlib it doesn't declare. Don't sign the .aab in the build (jarsigner's signing time
   breaks reproducibility). `libappmodules.so` links with `-g`; the packaged copy is
   `llvm-objcopy --strip-unneeded`, the unstripped one is `native_debug_libs`.
+- **versionCode from `--embed_label`** (`version_code_from_embed_label`): `stamp_version_code.py`
+  rewrites the merged manifest from `ctx.info_file`. That file changes with every commit, so only
+  this one small action may read it; aapt2 keeps a manifest's versionCode over `--version-code`.
+  `BuildConfig.VERSION_CODE` deliberately stays the attribute (Java would recompile per label).
 - **Source maps**: the CLI ignores `sourcemapSourcesRoot`, so `bundle.cjs` relativizes `sources`
   itself; hermesc writes `<bundle>.map`, so the composed map goes through a temporary name.
 - **`-DANDROID`** is in the appmodules copts because the NDK's CMake toolchain defines it and

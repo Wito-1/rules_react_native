@@ -142,22 +142,31 @@ def _merge_manifests(ctx, libraries):
         mnemonic = "AndroidManifestMerger",
         progress_message = "Merging Android manifests of %{label}",
     )
-    return merged
+    if not ctx.attr.version_code_from_embed_label:
+        return merged
+    stamped = ctx.actions.declare_file(ctx.label.name + "/stamped/AndroidManifest.xml")
+    ctx.actions.run(
+        executable = ctx.executable._stamp_version_code,
+        arguments = ["--manifest", merged.path, "--status", ctx.info_file.path, "--out", stamped.path],
+        inputs = [merged, ctx.info_file],
+        outputs = [stamped],
+        mnemonic = "AndroidStampVersionCode",
+        progress_message = "Setting the versionCode of %{label} from --embed_label",
+    )
+    return stamped
 
 def _compile_res_dir(ctx, name, res_dir, inputs):
     return compile_resources(ctx, ctx.file._aapt2, ctx.label.name + "/" + name, res_dir, inputs)
 
-def _res_root(files):
-    root = None
+def _res_roots(files):
+    """`res` files grouped by their res/ directory, in the order the directories first appear."""
+    roots = {}
     for f in files:
         idx = f.path.find("/res/")
         if idx < 0:
             fail("resource %s is not under a res/ directory" % f.path)
-        candidate = f.path[:idx + len("/res")]
-        if root != None and root != candidate:
-            fail("all `res` files must share one res/ directory, got %s and %s" % (root, candidate))
-        root = candidate
-    return root
+        roots.setdefault(f.path[:idx + len("/res")], []).append(f)
+    return roots.items()
 
 def _react_packages(ctx, infos):
     packages = {p: True for p in ctx.attr.react_packages}
@@ -174,8 +183,9 @@ def _android_app_resources_impl(ctx):
     overlays = [lib.flata for lib in libraries if lib.flata]
     for i, tree in enumerate(ctx.files.generated_res):
         overlays.append(_compile_res_dir(ctx, "generated_%d" % i, tree.path, [tree]))
-    if ctx.files.res:
-        overlays.append(_compile_res_dir(ctx, "app", _res_root(ctx.files.res), ctx.files.res))
+    # Each res/ directory overlays the ones before it, like a Gradle flavor's res over main's.
+    for i, (root, files) in enumerate(_res_roots(ctx.files.res)):
+        overlays.append(_compile_res_dir(ctx, "app" if i == 0 else "app_%d" % i, root, files))
 
     resources_apk = ctx.actions.declare_file(ctx.label.name + "/resources.ap_")
     r_txt = ctx.actions.declare_file(ctx.label.name + "/R.txt")
@@ -282,9 +292,11 @@ android_app_resources = rule(
         "res": attr.label_list(allow_files = True),
         "target_sdk": attr.int(mandatory = True),
         "version_code": attr.int(mandatory = True),
+        "version_code_from_embed_label": attr.bool(doc = "The manifest's versionCode is --embed_label when the build sets one."),
         "version_name": attr.string(mandatory = True),
         "_gen_r": attr.label(default = "//react_native/android/tools:gen_r", executable = True, cfg = "exec"),
         "_qualify_manifest": attr.label(default = "//react_native/android/tools:qualify_manifest", executable = True, cfg = "exec"),
+        "_stamp_version_code": attr.label(default = "//react_native/android/tools:stamp_version_code", executable = True, cfg = "exec"),
         "_manifest_merger_classpath": attr.label(default = "@rn_android_tools_maven//:all", cfg = "exec"),
     }),
 )
@@ -292,13 +304,15 @@ android_app_resources = rule(
 def _app_assets(files):
     roots = {}
     for f in files:
+        if f.is_directory:
+            continue
         idx = f.path.find("/assets/")
         if idx < 0:
             fail("%s is not under an assets/ directory" % f.path)
         roots[f.path[:idx + len("/assets")]] = True
     if len(roots) > 1:
         fail("all `assets` files must share one assets/ directory, got %s" % sorted(roots))
-    return [(f.path[f.path.find("/assets/") + len("/assets/"):], f) for f in files]
+    return [(f.path[f.path.find("/assets/") + len("/assets/"):], f) for f in files if not f.is_directory]
 
 def _android_apk_impl(ctx):
     res_info = ctx.attr.resources[AndroidAppResourcesInfo]
@@ -383,6 +397,9 @@ def _android_apk_impl(ctx):
             args.add("--asset", "%s=%s" % (f.basename, f.path))
         for path, f in _app_assets(ctx.files.app_assets):
             args.add("--asset", "%s=%s" % (path, f.path))
+        for d in ctx.files.app_assets:
+            if d.is_directory:
+                args.add("--asset_dir", d.path)
         args.add_all(runtime_jars, before_each = "--java_resources_from")
         if bundle_module:
             args.add("--bundle_module")
@@ -536,7 +553,7 @@ the R8 mapping and native debug symbols in its metadata), `native_debug_symbols`
 `proguard_mapping`, `unsigned`.""",
     attrs = dict(_SDK_ATTRS, **{
         "abis": attr.string_list(mandatory = True),
-        "app_assets": attr.label_list(allow_files = True, doc = "Files under one assets/ directory, packaged at the same relative paths (e.g. assets/fonts/X.ttf)."),
+        "app_assets": attr.label_list(allow_files = True, doc = "Files under one assets/ directory, packaged at the same relative paths (e.g. assets/fonts/X.ttf), and directories (tree artifacts) whose contents are packaged at their relative paths."),
         "assets": attr.label_list(allow_files = True, doc = "Files placed at the root of assets/, e.g. index.android.bundle."),
         "debug": attr.bool(default = False),
         "deps": attr.label_list(providers = [[JavaInfo], [AndroidLibraryInfo]]),

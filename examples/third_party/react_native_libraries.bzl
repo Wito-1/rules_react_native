@@ -6,8 +6,21 @@ Re-run it after adding, removing or upgrading a native npm dependency; the gener
 
 load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_npm_library")
 
-def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", **kwargs):
-    """Declares one react_native_npm_library per native dependency; returns their labels for the app's deps."""
+# The installed version of each library's package, for `overrides` that pass it to the build.
+VERSIONS = {
+    "react-native-safe-area-context": "5.10.1",
+}
+
+def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", overrides = {}, **kwargs):
+    """Declares one react_native_npm_library per native dependency; returns their labels for the app's deps.
+
+    Args:
+        node_modules: The app's npm_link_all_packages target.
+        maven: The app's release Maven repository.
+        overrides: Attributes to add or replace, per library: `{target name: {attribute: value}}`,
+            for what autolinking can't read from a library's Gradle build.
+        **kwargs: Common attributes of every target.
+    """
     react_native_codegen(
         name = "npm_react_native_safe_area_context_codegen",
         java_package = "com.th3rdwave.safeareacontext",
@@ -17,7 +30,9 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = "react-native-safe-area-context",
         **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_safe_area_context",
         build_config = True,
         cc_includes = [
@@ -47,8 +62,10 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         react_packages = [
             "com.th3rdwave.safeareacontext.SafeAreaContextPackage",
         ],
-        **kwargs
     )
     return [
         ":npm_react_native_safe_area_context",
     ]
+
+def _library(overrides, kwargs, **attrs):
+    react_native_npm_library(**(attrs | overrides.get(attrs["name"], {}) | kwargs))

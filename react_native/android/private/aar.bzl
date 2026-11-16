@@ -37,7 +37,9 @@ def appmodules_unit(
         defines = [],
         links = [],
         exported_trees = [],
-        exported_includes = []):
+        exported_includes = [],
+        imported = {},
+        copts = []):
     """What one library contributes to libappmodules.so, or a shared library of its own.
 
     Args:
@@ -71,6 +73,10 @@ def appmodules_unit(
         exported_trees: For a `soname` unit, tree artifacts holding `exported_includes`.
         exported_includes: For a `soname` unit, exec paths of include roots that units linking it
             compile against (its prefab headers), on top of its `includes`.
+        imported: For a `soname` unit, `{abi: File}`: a prebuilt lib<soname>.so (CMake's
+            `IMPORTED` library) that is packaged and linked as it is instead of being built. Its
+            `includes` are what units linking it compile against.
+        copts: For a `soname` unit, more compiler flags.
 
     Returns:
         struct, safe to put in a depset.
@@ -93,6 +99,8 @@ def appmodules_unit(
         links = tuple(links),
         exported_trees = tuple(exported_trees),
         exported_includes = tuple(exported_includes),
+        imported = tuple(sorted(imported.items())),
+        copts = tuple(copts),
     )
 
 AndroidMavenSetInfo = provider(

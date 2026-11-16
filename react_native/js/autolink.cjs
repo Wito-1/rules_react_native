@@ -183,7 +183,7 @@ function cmakeCondition(argv, vars) {
   return evalAt(argv);
 }
 
-function readCMake(file, reactNativeMinor) {
+function readCMake(file, reactNativeMinor, reactNativeDir) {
   const dir = path.dirname(file);
   const vars = {
     CMAKE_CURRENT_SOURCE_DIR: dir,
@@ -191,6 +191,8 @@ function readCMake(file, reactNativeMinor) {
     PROJECT_SOURCE_DIR: dir,
     ANDROID: "1",
     ReactAndroid_VERSION_MINOR: String(reactNativeMinor),
+    // What Gradle passes libraries that compile against React Native's own sources.
+    REACT_NATIVE_DIR: reactNativeDir,
   };
   const subst = (s) => s.replace(/\$\{(\w+)\}/g, (_, v) => vars[v] ?? `\u0000${v}`);
   const values = (argv) =>
@@ -198,7 +200,7 @@ function readCMake(file, reactNativeMinor) {
   const known = (list) => list.filter((p) => !p.includes("\u0000"));
   const resolve = (p) => (path.isAbsolute(p) ? path.normalize(p) : path.join(dir, p));
   const libraries = {};
-  const library = (name) => (libraries[name] ??= { sources: [], includes: [], defines: [], links: [] });
+  const library = (name) => (libraries[name] ??= { sources: [], includes: [], defines: [], links: [], pch: [] });
   const globalIncludes = [];
   const globalDefines = [];
   const codegenDirs = new Set();
@@ -261,16 +263,30 @@ function readCMake(file, reactNativeMinor) {
         library(subst(argv[0])).defines.push(...known(values(argv.slice(1))));
       } else if (name === "target_link_libraries" && argv.length) {
         library(subst(argv[0])).links.push(...known(values(argv.slice(1))));
+      } else if (name === "target_precompile_headers" && argv.length) {
+        library(subst(argv[0])).pch.push(...known(values(argv.slice(1))).map(resolve));
+      } else if (name === "string" && argv[0] === "APPEND" && /^CMAKE_(CXX|C)_FLAGS$/.test(argv[1])) {
+        // `string(APPEND CMAKE_CXX_FLAGS " -DFOO=1")`: definitions whose values are known here.
+        for (const flag of argv.slice(2).map(subst).join(" ").split(/\s+/)) {
+          // Only plain NAME or NAME=value: a quoted value is a string literal CMake escapes.
+          if (/^-D\w+(=[\w.+-]*)?$/.test(flag)) globalDefines.push(flag);
+        }
       }
     }
   };
   run(file);
 
   const keep = (p) => !p.includes(`${path.sep}build${path.sep}generated`) && fs.existsSync(p);
+  const inReactNative = (p) => p === reactNativeDir || p.startsWith(reactNativeDir + path.sep);
+  const includes = (lib) => [...new Set([...lib.includes, ...globalIncludes])].filter(keep);
   return Object.entries(libraries).map(([name, lib]) => ({
     name,
     sources: [...new Set(lib.sources)].filter(keep).filter((p) => /\.(c|cc|cpp)$/.test(p)),
-    includes: [...new Set([...lib.includes, ...globalIncludes])].filter(keep),
+    includes: includes(lib).filter((p) => !inReactNative(p)),
+    reactNativeIncludes: includes(lib)
+      .filter(inReactNative)
+      .map((p) => path.relative(reactNativeDir, p).split(path.sep).join("/")),
+    pch: [...new Set(lib.pch)].filter(keep),
     defines: [...new Set([...globalDefines, ...lib.defines].map((d) => d.replace(/^-D/, "")))],
     links: [...new Set(lib.links)],
     codegenDirs: codegenDirs.has("**") ? null : [...codegenDirs].sort(),
@@ -291,6 +307,10 @@ function sourceSetDirs(gradle, androidDir, appDeps) {
   let dirs = [...new Set([...JAVA_DIRS, ...named])].filter(
     (d) => !/paper|oldarch|old_arch|\/res\b|\/assets\b|jni|cpp|AndroidManifest/.test(d) && fs.existsSync(path.join(androidDir, d)),
   );
+  // BaseReactPackage (React Native 0.74+) replaced TurboReactPackage, which 0.88 no longer has:
+  // libraries that ship both pick src/base (react-native-keyboard-controller).
+  const under = (top) => (d) => d === top || d.startsWith(`${top}/`);
+  if (dirs.some(under("src/base")) && dirs.some(under("src/turbo"))) dirs = dirs.filter((d) => !under("src/turbo")(d));
   const tops = new Set(dirs.map((d) => d.split("/")[0]));
   dirs = dirs.filter((d) => {
     const top = d.split("/")[0];
@@ -318,6 +338,10 @@ function gradleVariables(gradle) {
   for (const m of gradle.matchAll(/^\s*(?:def\s+|ext\.)?(\w+)\s*=?\s*["']([^"'$\n]*)["']\s*$/gm)) {
     if (!(m[1] in vars)) vars[m[1]] = m[2];
   }
+  // `def v = (getExtOrDefault("v") ?: "1.0")`: the app could override it; the literal is the default.
+  for (const m of gradle.matchAll(/^\s*(?:def\s+|ext\.)?(\w+)\s*=\s*\(?[^\n]*\?:\s*["']([^"'$\n]*)["']\s*\)?\s*$/gm)) {
+    if (!(m[1] in vars)) vars[m[1]] = m[2];
+  }
   return vars;
 }
 
@@ -343,7 +367,7 @@ function buildConfigConstants(gradle) {
 function mavenDeps(gradle) {
   const vars = gradleVariables(gradle);
   const deps = new Map();
-  for (const m of gradle.matchAll(/^\s*(implementation|api)\s*\(?\s*["']([\w.-]+):([\w.-]+)(?::([^"']*))?["']/gm)) {
+  for (const m of gradle.matchAll(/^\s*(implementation|api|compileOnly)\s*\(?\s*["']([\w.-]+):([\w.-]+)(?::([^"']*))?["']/gm)) {
     const [, configuration, group, artifact, raw] = m;
     if (group === "com.facebook.react" || (group === "org.jetbrains.kotlin" && artifact.startsWith("kotlin-stdlib"))) {
       continue;
@@ -351,6 +375,10 @@ function mavenDeps(gradle) {
     // A classifier/type (`:cpp@zip`) is a build input of the library's own, not a dependency.
     if (raw?.includes("@")) continue;
     const version = raw && substGradle(raw, vars);
+    // compileOnly with no pinned version is an optional integration (JavaScriptCore next to
+    // Hermes); React Native's own artifacts come with react-android.
+    if (configuration === "compileOnly" && (!version || version === "+" || version.includes("$"))) continue;
+    if (group === "com.facebook.fbjni" || group === "com.facebook.hermes") continue;
     deps.set(`${group}:${artifact}`, {
       version: version && !version.includes("$") && version !== "+" ? version : null,
       api: configuration === "api",
@@ -445,19 +473,45 @@ function packageRoot(dir, name) {
 // Expo Modules v2 compiler plugin. expo-modules-core packages its prebuilt native libraries.
 // `expo` depends on every other module, as Expo's autolinking arranges, because its
 // ExpoModulesV2ModuleList is filled in by the compiler plugin from its classpath.
-function describeExpo(modules, appDeps, reactNativeVersion, reactNativeMinor) {
+// The app dependency whose link target's closure holds `name`, an Expo module the app doesn't
+// depend on itself: `expo` for its own modules, else e.g. expo-auth-session for expo-linking.
+function linkedVia(name, pkgDir, appDeps, appRequire) {
+  const candidates = ["expo", ...[...appDeps].sort().filter((d) => d !== "expo")];
+  for (const dep of candidates) {
+    try {
+      const depDir = path.dirname(appRequire.resolve(`${dep}/package.json`));
+      const resolved = createRequire(path.join(depDir, "package.json")).resolve(`${name}/package.json`);
+      if (fs.realpathSync(path.dirname(resolved)) === fs.realpathSync(pkgDir)) return dep;
+    } catch {
+      // Not resolvable from this dependency.
+    }
+  }
+  fail(`${name}: Expo's autolinking found it, but no dependency of the app depends on it`);
+}
+
+function describeExpo(modules, appDeps, reactNativeVersion, reactNativeMinor, appRequire) {
   // Optional parts of modules (expo-modules-core's Compose support) sit in Gradle conditionals on
   // these; build.gradle isn't evaluated, so their dependencies are dropped here.
   const coreFeatures = new Set(modules.flatMap((m) => m.coreFeatures ?? []));
   const libs = [];
+  // Packages that are also React Native libraries, in another directory than their Expo module
+  // (@sentry/react-native's android/ and android/expo-handler): Gradle links both.
+  const alsoReactNative = new Set();
   for (const m of modules) {
     for (const project of m.projects ?? []) {
       const androidDir = fs.realpathSync(project.sourceDir);
       const pkgDir = packageRoot(androidDir, m.packageName);
       const lib = describe(m.packageName, pkgDir, appDeps, reactNativeMinor, androidDir);
       if (!lib) fail(`${m.packageName}: no Android project in ${androidDir}`);
-      if (m.projects.length > 1) lib.target = targetName(`${m.packageName}-${project.name}`);
-      lib.expo = { project, viaExpo: !appDeps.has(m.packageName) };
+      const rnConfig = m.packageName === "expo" ? {} : loadConfig(pkgDir);
+      const rnDir = rnConfig.android === null ? null : path.join(pkgDir, rnConfig.android?.sourceDir ?? "android");
+      const separate =
+        rnDir && (exists(rnDir, "build.gradle") || exists(rnDir, "build.gradle.kts")) && fs.realpathSync(rnDir) !== androidDir;
+      if (separate) alsoReactNative.add(m.packageName);
+      if (m.projects.length > 1 || separate) lib.target = targetName(`${m.packageName}-${project.name}`);
+      // The package's codegenConfig is its React Native library's.
+      if (separate) lib.codegen = null;
+      lib.expo = { project, via: appDeps.has(m.packageName) ? null : linkedVia(m.packageName, pkgDir, appDeps, appRequire) };
       lib.reactPackages = m.packageName === "expo" ? ["expo.modules.ExpoModulesPackage"] : [];
       lib.libraryDeps = [];
       lib.javaDirs = lib.javaDirs.filter((d) => !/\/src\/compose$/.test(d));
@@ -494,7 +548,7 @@ function describeExpo(modules, appDeps, reactNativeVersion, reactNativeMinor) {
       }
     }
     if (lib.npmPackage === "expo") {
-      lib.libraryDeps = libs.filter((l) => l !== lib).map((l) => l.npmPackage);
+      lib.libraryDepTargets = libs.filter((l) => l !== lib).map((l) => l.target);
     }
     lib.maven.sort((a, b) => a.coordinate.localeCompare(b.coordinate));
     lib.kotlinPlugins = [{ coordinate: EXPO_V2_COMPILER_PLUGIN, version: `${v2}-${KOTLINC_VERSION}` }];
@@ -511,7 +565,7 @@ function describeExpo(modules, appDeps, reactNativeVersion, reactNativeMinor) {
       packageList.services.push(...(project.services ?? []));
     }
   }
-  return { libs, packageList };
+  return { libs, packageList, alsoReactNative };
 }
 
 function targetName(npmPackage) {
@@ -548,6 +602,7 @@ function describe(name, pkgDir, appDeps, reactNativeMinor, expoAndroidDir = null
 
   const lib = {
     npmPackage: name,
+    version: pkg.version,
     target: targetName(name),
     package: namespace,
     javaDirs: javaDirs.map((d) => path.posix.normalize(`${androidRel}/${d}`)),
@@ -564,6 +619,8 @@ function describe(name, pkgDir, appDeps, reactNativeMinor, expoAndroidDir = null
     ccIncludes: [],
     sharedLibraries: {},
     sharedLibraryIncludes: {},
+    sharedLibraryReactNativeIncludes: {},
+    sharedLibraryForceIncludes: {},
     sharedLibraryDefines: {},
     sharedLibraryLinks: {},
     prefabHeaders: {},
@@ -594,24 +651,29 @@ function describe(name, pkgDir, appDeps, reactNativeMinor, expoAndroidDir = null
   // The CMakeLists.txt react-native.config.js names is linked into the app's native library by
   // Gradle's autolinking (here: compiled into libappmodules.so).
   const autolinked = path.join(androidDir, android.cmakeListsPath ?? "src/main/jni/CMakeLists.txt");
-  if (fs.existsSync(autolinked)) {
-    for (const l of readCMake(autolinked, reactNativeMinor)) {
+  // The library's own externalNativeBuild builds .so files its Java loads by name.
+  const own = gradle.match(
+    /externalNativeBuild\s*\{\s*cmake\s*\{[^}]*?path\s*=?\s*\(?\s*(?:file\s*\(\s*)?["']([^"']+)["']/,
+  );
+  // A library whose own build uses the default autolinking path (@sentry/react-native's
+  // src/main/jni/) has nothing for the app's native library.
+  const ownIsAutolinked = own && path.resolve(path.join(androidDir, own[1])) === path.resolve(autolinked);
+  if (fs.existsSync(autolinked) && !ownIsAutolinked) {
+    for (const l of readCMake(autolinked, reactNativeMinor, reactNativeDir)) {
       lib.ccSrcs.push(...l.sources.map(rel));
       lib.ccIncludes.push(...l.includes.map(rel));
       if (l.codegenDirs) lib.codegenCcDirs = l.codegenDirs;
     }
   }
-  // The library's own externalNativeBuild builds .so files its Java loads by name.
-  const own = gradle.match(
-    /externalNativeBuild\s*\{\s*cmake\s*\{[^}]*?path\s*=?\s*\(?\s*(?:file\s*\(\s*)?["']([^"']+)["']/,
-  );
   if (own) {
     const file = path.join(androidDir, own[1]);
-    if (path.resolve(file) !== path.resolve(autolinked) && fs.existsSync(file)) {
-      for (const l of readCMake(file, reactNativeMinor)) {
+    if (fs.existsSync(file)) {
+      for (const l of readCMake(file, reactNativeMinor, reactNativeDir)) {
         if (l.sources.length === 0) continue;
         lib.sharedLibraries[l.name] = l.sources.map(rel);
         lib.sharedLibraryIncludes[l.name] = l.includes.map(rel);
+        if (l.reactNativeIncludes.length) lib.sharedLibraryReactNativeIncludes[l.name] = l.reactNativeIncludes;
+        if (l.pch.length) lib.sharedLibraryForceIncludes[l.name] = l.pch.map(rel);
         const defines = l.defines.filter((d) => !d.startsWith("FOLLY_"));
         if (defines.length) lib.sharedLibraryDefines[l.name] = defines;
         // Other native libraries it links: another npm library's (`pkg::Name`) or a prefab from a
@@ -665,8 +727,19 @@ function render(libs, label, maven, expoPackageList) {
       ? 'load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_expo_package_list", "react_native_npm_library")'
       : 'load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_npm_library")',
     "",
-    `def react_native_libraries(node_modules = ":node_modules", maven = ${JSON.stringify(maven)}, **kwargs):`,
-    '    """Declares one react_native_npm_library per native dependency; returns their labels for the app\'s deps."""',
+    "# The installed version of each library's package, for `overrides` that pass it to the build.",
+    `VERSIONS = ${starlarkDict(Object.fromEntries([...new Map(libs.map((l) => [l.npmPackage, l.version])).entries()].sort()), 0)}`,
+    "",
+    `def react_native_libraries(node_modules = ":node_modules", maven = ${JSON.stringify(maven)}, overrides = {}, **kwargs):`,
+    '    """Declares one react_native_npm_library per native dependency; returns their labels for the app\'s deps.',
+    "",
+    "    Args:",
+    "        node_modules: The app's npm_link_all_packages target.",
+    "        maven: The app's release Maven repository.",
+    "        overrides: Attributes to add or replace, per library: `{target name: {attribute: value}}`,",
+    "            for what autolinking can't read from a library's Gradle build.",
+    "        **kwargs: Common attributes of every target.",
+    "    \"\"\"",
   ];
   if (libs.length === 0) {
     lines.push("    return []", "");
@@ -688,6 +761,7 @@ function render(libs, label, maven, expoPackageList) {
         "    )",
       );
     }
+    attrs.push("        overrides = overrides,", "        kwargs = kwargs,");
     a("name", JSON.stringify(lib.target));
     if (lib.buildConfig) a("build_config", "True");
     if (Object.keys(lib.buildConfigConstants).length) a("build_config_constants", starlarkDict(lib.buildConfigConstants, 8));
@@ -697,8 +771,9 @@ function render(libs, label, maven, expoPackageList) {
     if (lib.codegen && lib.codegenCcDirs?.length) a("codegen_cc_dirs", starlarkList(lib.codegenCcDirs, 8));
     if (lib.componentDescriptors) a("component_descriptors", starlarkList(lib.componentDescriptors, 8));
     if (Object.keys(lib.cxxModules).length) a("cxx_modules", starlarkDict(lib.cxxModules, 8));
-    if (lib.libraryDeps.length) {
-      a("deps", starlarkList(lib.libraryDeps.map((d) => `:${targetName(d)}`), 8));
+    const depTargets = lib.libraryDepTargets ?? lib.libraryDeps.map(targetName);
+    if (depTargets.length) {
+      a("deps", starlarkList(depTargets.map((t) => `:${t}`), 8));
     }
     a("java_dirs", starlarkList(lib.javaDirs, 8));
     a("manifest", JSON.stringify(lib.manifest));
@@ -711,9 +786,10 @@ function render(libs, label, maven, expoPackageList) {
     if (lib.kotlinPlugins?.length) {
       a("kotlin_plugins", `[\n${lib.kotlinPlugins.map((d) => `            ${mavenLabel(d.coordinate)},`).join("\n")}\n        ]`);
     }
-    if (lib.expo?.viaExpo) {
-      // Expo's own modules come with the expo package; they have no link target of their own.
-      a("npm_package", `node_modules + "/expo"`);
+    if (lib.expo?.via) {
+      // Modules the app doesn't depend on itself (Expo's own, with the expo package) have no link
+      // target of their own: they're in the closure of the dependency that brings them.
+      a("npm_package", `node_modules + "/${lib.expo.via}"`);
       a("npm_package_name", JSON.stringify(lib.npmPackage));
     } else {
       a("npm_package", `node_modules + "/${lib.npmPackage}"`);
@@ -727,10 +803,17 @@ function render(libs, label, maven, expoPackageList) {
     if (Object.keys(lib.sharedLibraries).length) {
       a("shared_libraries", starlarkDict(lib.sharedLibraries, 8));
       if (Object.keys(lib.sharedLibraryDefines).length) a("shared_library_defines", starlarkDict(lib.sharedLibraryDefines, 8));
+      if (Object.keys(lib.sharedLibraryForceIncludes).length) {
+        a("shared_library_force_includes", starlarkDict(lib.sharedLibraryForceIncludes, 8));
+      }
       a("shared_library_includes", starlarkDict(lib.sharedLibraryIncludes, 8));
       if (Object.keys(lib.sharedLibraryLinks).length) a("shared_library_links", starlarkDict(lib.sharedLibraryLinks, 8));
+      if (Object.keys(lib.sharedLibraryReactNativeIncludes).length) {
+        a("react_native_package", `node_modules + "/react-native"`);
+        a("shared_library_react_native_includes", starlarkDict(lib.sharedLibraryReactNativeIncludes, 8));
+      }
     }
-    lines.push("    react_native_npm_library(", ...attrs, "        **kwargs", "    )");
+    lines.push("    _library(", ...attrs, "    )");
   }
   const targets = libs.map((l) => l.target);
   if (expoPackageList) {
@@ -747,23 +830,36 @@ function render(libs, label, maven, expoPackageList) {
     );
     targets.push("expo_package_list");
   }
-  lines.push("    return [", ...targets.map((t) => `        ":${t}",`), "    ]", "");
+  lines.push(
+    "    return [",
+    ...targets.map((t) => `        ":${t}",`),
+    "    ]",
+    "",
+    "def _library(overrides, kwargs, **attrs):",
+    '    react_native_npm_library(**(attrs | overrides.get(attrs["name"], {}) | kwargs))',
+    "",
+  );
   return lines.join("\n");
 }
+
+// The react-native package the app resolves, for CMake's ${REACT_NATIVE_DIR}.
+let reactNativeDir = null;
 
 function main() {
   const packageJson = path.resolve(args["package-json"]);
   const app = JSON.parse(fs.readFileSync(packageJson, "utf8"));
   const appRequire = createRequire(packageJson);
   const rnPackage = JSON.parse(fs.readFileSync(appRequire.resolve("react-native/package.json"), "utf8"));
+  reactNativeDir = fs.realpathSync(path.dirname(appRequire.resolve("react-native/package.json")));
   const reactNativeMinor = Number(rnPackage.version.split(".")[1]);
   const appDeps = new Set(Object.keys(app.dependencies ?? {}));
   const expoModules = resolveExpoModules(packageJson, appRequire);
-  const expo = expoModules ? describeExpo(expoModules, appDeps, rnPackage.version, reactNativeMinor) : null;
+  const expo = expoModules ? describeExpo(expoModules, appDeps, rnPackage.version, reactNativeMinor, appRequire) : null;
   const expoPackages = new Set(expo ? expo.libs.map((l) => l.npmPackage) : []);
   const libs = [];
   for (const name of Object.keys(app.dependencies ?? {}).sort()) {
-    if (name === "react-native" || name === "react" || expoPackages.has(name)) continue;
+    if (name === "react-native" || name === "react") continue;
+    if (expoPackages.has(name) && !expo.alsoReactNative.has(name)) continue;
     let pkgDir;
     try {
       pkgDir = fs.realpathSync(path.dirname(appRequire.resolve(`${name}/package.json`)));

@@ -113,6 +113,30 @@ def _codegen_sources(dirs):
 
     return map_each
 
+# The NDK's platform libraries (sysroot usr/lib/<triple>/<api>/), which a library's CMake links by
+# name and the device provides.
+_NDK_SYSTEM_LIBS = [
+    "EGL",
+    "GLESv1_CM",
+    "GLESv2",
+    "GLESv3",
+    "OpenMAXAL",
+    "OpenSLES",
+    "aaudio",
+    "amidi",
+    "binder_ndk",
+    "camera2ndk",
+    "dl",
+    "jnigraphics",
+    "m",
+    "mediandk",
+    "nativewindow",
+    "neuralnetworks",
+    "sync",
+    "vulkan",
+    "z",
+]
+
 def _tree_sources(paths):
     exact = {p: True for p in paths}
     prefixes = [p.rstrip("/") + "/" for p in paths]
@@ -150,6 +174,11 @@ def _shared_libraries_in_order(shared):
 
 def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs, shared, built, abi_libs):
     """Builds a library's own lib<soname>.so with the same flags and React Native libraries."""
+    if unit.imported:
+        prebuilt = dict(unit.imported)
+        if abi not in prebuilt:
+            fail("lib%s.so is prebuilt for %s, not %s" % (soname, sorted(prebuilt), abi))
+        return prebuilt[abi], None
     unstripped = ctx.actions.declare_file("%s/unstripped/%s/lib%s.so" % (ctx.label.name, abi, soname))
     out = ctx.actions.declare_file("%s/%s/lib%s.so" % (ctx.label.name, abi, soname))
     args = ctx.actions.args()
@@ -159,6 +188,7 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs, sh
     if not ctx.attr.debug:
         args.add_all(_RELEASE_COPTS)
     args.add_all(ctx.attr.copts)
+    args.add_all(unit.copts)
     args.add_all(["-D" + d for d in unit.defines])
     linked_units = [shared[l] for l in unit.links if l in shared]
     args.add_all(
@@ -175,8 +205,11 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs, sh
     args.add("-nostdlib++")
     args.add_all([link_libs[l] for l in _LINK_LIBS])
     extra_links = []
+    system_links = []
     for l in unit.links:
-        if l in built:
+        if l in _NDK_SYSTEM_LIBS:
+            system_links.append("-l" + l)
+        elif l in built:
             extra_links.append(built[l])
         elif "lib%s.so" % l in abi_libs:
             extra_links.append(abi_libs["lib%s.so" % l])
@@ -185,6 +218,7 @@ def _shared_library(ctx, abi, soname, unit, link_libs, headers, include_dirs, sh
         else:
             fail("lib%s.so links %s, which no library builds or ships for %s" % (soname, l, abi))
     args.add_all(extra_links)
+    args.add_all(system_links)
     args.add_all([
         "-llog",
         "-landroid",
@@ -344,9 +378,10 @@ def _react_native_appmodules_impl(ctx):
                 abi_libs.setdefault(lib.file.basename, lib.file)
         for soname in _shared_libraries_in_order(shared):
             lib_out, lib_unstripped = _shared_library(ctx, abi, soname, shared[soname], link_libs, headers, include_dirs, shared, built, abi_libs)
-            built[soname] = lib_unstripped
+            built[soname] = lib_unstripped or lib_out
             outputs.append(struct(abi = abi, file = lib_out))
-            debug_outputs.append(struct(abi = abi, file = lib_unstripped))
+            if lib_unstripped:
+                debug_outputs.append(struct(abi = abi, file = lib_unstripped))
 
     return [
         DefaultInfo(files = depset([o.file for o in outputs])),

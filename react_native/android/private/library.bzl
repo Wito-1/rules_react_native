@@ -1,5 +1,6 @@
 """Android library code for a React Native app: first-party sources, or an npm package's android/ tree."""
 
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 load("//react_native/js/private:codegen.bzl", "ReactNativeCodegenInfo")
 load(":aar.bzl", "AndroidLibraryInfo", "appmodules_unit", "collect_android_infos", "compile_resources", "merge_android_infos")
@@ -302,13 +303,40 @@ its `react_packages` are added to PackageList.""",
 _PREBUILT_ABIS = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]
 
 def _npm_package_dir(target, name):
+    """The package's directory in the link target's closure: `struct(path, files)`, its inputs."""
+
     # npm_link_package's files are the package's whole closure; the package itself is the one
     # store directory named after it.
     suffix = "/node_modules/" + name
-    for f in target[DefaultInfo].files.to_list():
+    files = target[DefaultInfo].files.to_list()
+    for f in files:
         if f.is_directory and f.path.endswith(suffix) and "/.aspect_rules_js/" in f.path:
-            return f
+            return struct(path = f.path, files = [f])
+
+    # A pnpm workspace package (`workspace:*`): its store entry is a symlink to the package's own
+    # files, which the closure lists one by one. Its root is the one package.json among them
+    # outside any node_modules.
+    if [f for f in files if f.is_symlink and f.path.endswith(suffix) and "/.aspect_rules_js/" in f.path]:
+        roots = [
+            f.dirname
+            for f in files
+            if f.basename == "package.json" and not f.is_symlink and not f.is_directory and "/node_modules/" not in f.path
+        ]
+        if len(roots) == 1:
+            prefix = roots[0] + "/"
+            return struct(
+                path = roots[0],
+                files = [f for f in files if f.path.startswith(prefix) and "/node_modules/" not in f.path[len(prefix) - 1:]],
+            )
+        fail("%s links the workspace package %s, but its closure has %s package.json files outside node_modules; expected one" % (target.label, name, len(roots)))
     fail("%s does not provide the %s package directory; pass the package's npm_link_all_packages target, e.g. \":node_modules/%s\"" % (target.label, name, name))
+
+def _package_file(pkg, file_path):
+    """A file of the package as `struct(file, path)`: in a store directory, `file` is the directory."""
+    for f in pkg.files:
+        if f.path == file_path or f.is_directory:
+            return struct(file = f, path = file_path)
+    fail("%s is not in the package" % file_path)
 
 def _react_native_npm_library_impl(ctx):
     name = ctx.attr.npm_package.label.name
@@ -319,9 +347,9 @@ def _react_native_npm_library_impl(ctx):
     def path(rel):
         return pkg.path + "/" + rel
 
-    manifest = _library_manifest(ctx, path(ctx.attr.manifest) if ctx.attr.manifest else None, [pkg])
+    manifest = _library_manifest(ctx, path(ctx.attr.manifest) if ctx.attr.manifest else None, pkg.files)
     flatas = [
-        compile_resources(ctx, ctx.file._aapt2, "%s/res_%d" % (ctx.label.name, i), path(d), [pkg])
+        compile_resources(ctx, ctx.file._aapt2, "%s/res_%d" % (ctx.label.name, i), path(d), pkg.files)
         for i, d in enumerate(ctx.attr.res_dirs)
     ]
     flata = flatas[0] if len(flatas) == 1 else None
@@ -347,7 +375,7 @@ def _react_native_npm_library_impl(ctx):
     if ctx.attr.cc_dirs or ctx.attr.cc_srcs or ctx.attr.component_descriptors:
         appmodules.append(appmodules_unit(
             key = str(ctx.label),
-            trees = [pkg],
+            trees = pkg.files,
             tree_src_dirs = [path(d) for d in ctx.attr.cc_dirs + ctx.attr.cc_srcs],
             includes = [path(d) for d in ctx.attr.cc_includes],
             component_descriptors = ctx.attr.component_descriptors,
@@ -364,23 +392,76 @@ def _react_native_npm_library_impl(ctx):
         ctx.actions.run(
             executable = ctx.executable._prefab_headers,
             arguments = [prefab_args],
-            inputs = [pkg],
+            inputs = pkg.files,
             outputs = [prefab_dir],
             mnemonic = "ReactNativePrefabHeaders",
             progress_message = "Collecting the prefab headers of %{label}",
         )
         prefab = [prefab_dir]
+    codegen_jni = [c[ReactNativeCodegenInfo].jni for c in ctx.attr.codegen]
+    for target, soname in ctx.attr.shared_library_cc_srcs.items() + ctx.attr.shared_library_cc_deps.items():
+        if soname not in ctx.attr.shared_libraries:
+            fail("%s is for lib%s.so, which isn't one of shared_libraries" % (target.label, soname))
     for soname, srcs in sorted(ctx.attr.shared_libraries.items()):
+        # C++ from other Bazel packages compiled into it: sources from filegroups, headers,
+        # include roots and defines from cc_library targets (which are never built themselves).
+        extra_srcs = [
+            f
+            for t, s in ctx.attr.shared_library_cc_srcs.items()
+            if s == soname
+            for f in t[DefaultInfo].files.to_list()
+            if f.extension in ("c", "cc", "cpp")
+        ]
+        cc = [t[CcInfo].compilation_context for t, s in ctx.attr.shared_library_cc_deps.items() if s == soname]
+        rn_includes = ctx.attr.shared_library_react_native_includes.get(soname, [])
+        rn_files = []
+        if rn_includes:
+            if not ctx.attr.react_native_package:
+                fail("shared_library_react_native_includes needs react_native_package")
+            rn = _npm_package_dir(ctx.attr.react_native_package, "react-native")
+            rn_files = rn.files
+            rn_includes = [rn.path + "/" + i for i in rn_includes]
         appmodules.append(appmodules_unit(
             key = "%s#%s" % (ctx.label, soname),
-            trees = [pkg],
+            srcs = extra_srcs,
+            # The library's codegen output too, which its CMake includes from Gradle's build
+            # directory (build/generated/source/codegen/jni).
+            trees = pkg.files + rn_files + codegen_jni + [h for c in cc for h in c.headers.to_list()],
             tree_src_dirs = [path(s) for s in srcs],
-            includes = [path(i) for i in ctx.attr.shared_library_includes.get(soname, [])],
+            includes = [path(i) for i in ctx.attr.shared_library_includes.get(soname, [])] + [
+                i
+                for c in cc
+                # External repositories' `includes` land in external_includes (Bazel 7+).
+                for i in c.includes.to_list() + c.quote_includes.to_list() + c.system_includes.to_list() + c.external_includes.to_list()
+            ] + rn_includes + [d.path for d in codegen_jni],
+            copts = [a for h in ctx.attr.shared_library_force_includes.get(soname, []) for a in ("-include", path(h))],
             soname = soname,
-            defines = ctx.attr.shared_library_defines.get(soname, []),
+            defines = ctx.attr.shared_library_defines.get(soname, []) + [d for c in cc for d in c.defines.to_list()],
             links = ctx.attr.shared_library_links.get(soname, []),
             exported_trees = prefab,
             exported_includes = [d.path for d in prefab],
+        ))
+
+    for soname, lib_dir in sorted(ctx.attr.imported_shared_libraries.items()):
+        imported = {}
+        for abi in _PREBUILT_ABIS:
+            f = ctx.actions.declare_file("%s/imported/%s/lib%s.so" % (ctx.label.name, abi, soname))
+            src = "%s/%s/lib%s.so" % (path(lib_dir), abi, soname)
+            ctx.actions.run_shell(
+                command = 'cp "$1" "$2"',
+                arguments = [src, f.path],
+                inputs = pkg.files,
+                outputs = [f],
+                mnemonic = "ReactNativeImportSharedLibrary",
+                progress_message = "Importing lib%s.so for %s of %%{label}" % (soname, abi),
+            )
+            imported[abi] = f
+        appmodules.append(appmodules_unit(
+            key = "%s#%s" % (ctx.label, soname),
+            trees = pkg.files,
+            includes = [path(i) for i in ctx.attr.shared_library_includes.get(soname, [])],
+            soname = soname,
+            imported = imported,
         ))
 
     native_libs = []
@@ -400,7 +481,7 @@ def _react_native_npm_library_impl(ctx):
         ctx.actions.run(
             executable = ctx.executable._extract_native_libs,
             arguments = [extract_args],
-            inputs = [pkg],
+            inputs = pkg.files,
             outputs = outs,
             mnemonic = "ReactNativeExtractNativeLibs",
             progress_message = "Extracting the prebuilt native libraries of %{label}",
@@ -414,12 +495,12 @@ def _react_native_npm_library_impl(ctx):
         srcs = [],
         srcjars = [],
         srcdirs = [path(d) for d in ctx.attr.java_dirs],
-        srcdir_inputs = [pkg],
+        srcdir_inputs = pkg.files,
         # The sources are only known at execution time.
         kotlin = True,
         assets = [],
         appmodules = appmodules,
-        proguard_specs = [struct(file = pkg, path = path(p)) for p in ctx.attr.proguard_specs],
+        proguard_specs = [_package_file(pkg, path(p)) for p in ctx.attr.proguard_specs],
     )
 
 react_native_npm_library = rule(
@@ -450,6 +531,13 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
             doc = "The package to build when it isn't `npm_package` itself but one of its dependencies, which have no " +
                   "link target of their own: `npm_package = \":node_modules/expo\"`, `npm_package_name = \"expo-asset\"`.",
         ),
+        "imported_shared_libraries": attr.string_dict(
+            doc = "Prebuilt native libraries the package ships for other libraries to link (CMake's " +
+                  "`add_library(<name> SHARED IMPORTED)`), `{name: directory}`: `<directory>/<abi>/lib<name>.so` " +
+                  "for every ABI, e.g. `{\"webgpu_dawn\": \"libs/android\"}`. They're packaged as they are; " +
+                  "`shared_library_includes[name]` are the headers that shared libraries linking them " +
+                  "(`shared_library_links`) compile against.",
+        ),
         "prebuilt_native_libs": attr.string_list_dict(
             doc = "Native libraries the package ships prebuilt instead of building its C++, `{archive: [libraries]}`: " +
                   "a tar archive in the package laid out as `<variant>/<abi>/<library>`, e.g. expo-modules-core's " +
@@ -467,7 +555,29 @@ registered in autolinking.cpp. Directory attributes are paths inside the package
             doc = "The library's own native libraries (its `externalNativeBuild` CMakeLists.txt), `{name: [sources]}`: " +
                   "`lib<name>.so` is built per ABI with React Native's flags and libraries and packaged next to them.",
         ),
+        "shared_library_cc_deps": attr.label_keyed_string_dict(
+            providers = [CcInfo],
+            doc = "`cc_library` targets whose headers, include roots and defines a shared library compiles " +
+                  "against, `{cc_library: name}`. They aren't linked: compile their sources in with " +
+                  "`shared_library_cc_srcs`. For C++ a library's CMake fetches itself (FetchContent) and the " +
+                  "workspace builds with Bazel.",
+        ),
+        "shared_library_cc_srcs": attr.label_keyed_string_dict(
+            allow_files = True,
+            doc = "More .c/.cc/.cpp files compiled into a shared library, `{files: name}`, e.g. a filegroup " +
+                  "of the sources of a `shared_library_cc_deps` library.",
+        ),
         "shared_library_defines": attr.string_list_dict(doc = "Preprocessor definitions of each of `shared_libraries`."),
+        "shared_library_force_includes": attr.string_list_dict(
+            doc = "Headers every source of a shared library includes first, `{name: [headers]}`: its CMake " +
+                  "`target_precompile_headers`, which its sources may rely on instead of including them.",
+        ),
+        "shared_library_react_native_includes": attr.string_list_dict(
+            doc = "Include roots in the react-native package (CMake's `${REACT_NATIVE_DIR}/...`) of each of " +
+                  "`shared_libraries`, for libraries that compile against React Native's own sources rather " +
+                  "than its prefab headers, e.g. `[\"ReactCommon/jsiexecutor\"]`. Needs `react_native_package`.",
+        ),
+        "react_native_package": attr.label(doc = "The app's `:node_modules/react-native`, for `shared_library_react_native_includes`."),
         "shared_library_includes": attr.string_list_dict(doc = "Include roots of each of `shared_libraries`."),
         "shared_library_links": attr.string_list_dict(
             doc = "Other native libraries each of `shared_libraries` links, by name without `lib`/`.so`: another npm " +

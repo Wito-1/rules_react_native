@@ -6,8 +6,26 @@ Re-run it after adding, removing or upgrading a native npm dependency; the gener
 
 load("@rules_react_native//react_native:defs.bzl", "react_native_codegen", "react_native_npm_library")
 
-def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", **kwargs):
-    """Declares one react_native_npm_library per native dependency; returns their labels for the app's deps."""
+# The installed version of each library's package, for `overrides` that pass it to the build.
+VERSIONS = {
+    "react-native-gesture-handler": "3.3.0",
+    "react-native-mmkv": "4.3.2",
+    "react-native-nitro-modules": "0.37.1",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-screens": "4.30.0",
+    "react-native-svg": "15.15.5",
+}
+
+def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", overrides = {}, **kwargs):
+    """Declares one react_native_npm_library per native dependency; returns their labels for the app's deps.
+
+    Args:
+        node_modules: The app's npm_link_all_packages target.
+        maven: The app's release Maven repository.
+        overrides: Attributes to add or replace, per library: `{target name: {attribute: value}}`,
+            for what autolinking can't read from a library's Gradle build.
+        **kwargs: Common attributes of every target.
+    """
     react_native_codegen(
         name = "npm_react_native_gesture_handler_codegen",
         java_package = "com.swmansion.gesturehandler",
@@ -17,7 +35,9 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = "react-native-gesture-handler",
         **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_gesture_handler",
         build_config = True,
         cc_includes = [
@@ -61,9 +81,16 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
                 "shared/runtime",
             ],
         },
-        **kwargs
+        react_native_package = node_modules + "/react-native",
+        shared_library_react_native_includes = {
+            "gesturehandler": [
+                "ReactCommon",
+            ],
+        },
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_mmkv",
         build_config = True,
         deps = [
@@ -116,7 +143,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
                 "mmkv",
             ],
         },
-        **kwargs
     )
     react_native_codegen(
         name = "npm_react_native_nitro_modules_codegen",
@@ -127,7 +153,9 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = "react-native-nitro-modules",
         **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_nitro_modules",
         build_config = True,
         codegen = [":npm_react_native_nitro_modules_codegen"],
@@ -199,7 +227,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
                 "android/src/main/cpp/views",
             ],
         },
-        **kwargs
     )
     react_native_codegen(
         name = "npm_react_native_safe_area_context_codegen",
@@ -210,7 +237,9 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = "react-native-safe-area-context",
         **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_safe_area_context",
         build_config = True,
         cc_includes = [
@@ -240,7 +269,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         react_packages = [
             "com.th3rdwave.safeareacontext.SafeAreaContextPackage",
         ],
-        **kwargs
     )
     react_native_codegen(
         name = "npm_react_native_screens_codegen",
@@ -251,7 +279,9 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = "react-native-screens",
         **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_screens",
         build_config = True,
         build_config_constants = {
@@ -353,7 +383,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
                 "cpp",
             ],
         },
-        **kwargs
     )
     react_native_codegen(
         name = "npm_react_native_svg_codegen",
@@ -364,7 +393,9 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         npm_package = "react-native-svg",
         **kwargs
     )
-    react_native_npm_library(
+    _library(
+        overrides = overrides,
+        kwargs = kwargs,
         name = "npm_react_native_svg",
         build_config = True,
         cc_includes = [
@@ -430,7 +461,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         react_packages = [
             "com.horcrux.svg.SvgPackage",
         ],
-        **kwargs
     )
     return [
         ":npm_react_native_gesture_handler",
@@ -440,3 +470,6 @@ def react_native_libraries(node_modules = ":node_modules", maven = "@rn_maven", 
         ":npm_react_native_screens",
         ":npm_react_native_svg",
     ]
+
+def _library(overrides, kwargs, **attrs):
+    react_native_npm_library(**(attrs | overrides.get(attrs["name"], {}) | kwargs))

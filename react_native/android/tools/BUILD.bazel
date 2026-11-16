@@ -74,6 +74,27 @@ py_binary(
 )
 
 py_library(
+    name = "stamp_version_code_lib",
+    srcs = ["stamp_version_code.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "stamp_version_code",
+    srcs = ["stamp_version_code.py"],
+    legacy_create_init = 0,
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "stamp_version_code_test",
+    size = "small",
+    srcs = ["stamp_version_code_test.py"],
+    legacy_create_init = 0,
+    deps = [":stamp_version_code_lib"],
+)
+
+py_library(
     name = "qualify_manifest_lib",
     srcs = ["qualify_manifest.py"],
     imports = ["."],
